@@ -1,0 +1,17 @@
+[package]
+name = "socks5-tls-ja"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+hudsucker = { version = "0.19.4", features = ["rcgen-ca"] }
+rustls = "0.20"
+rcgen = "0.11"
+hyper = { version = "0.14", features = ["full", "http2"] }
+hyper-rustls = { version = "0.23", features = ["http2"] }
+tokio-socks = "0.5"
+webpki-roots = "0.22"
+anyhow = "1"
+tower-service = "0.3"
+pem = "3"

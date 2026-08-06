@@ -2,10 +2,13 @@
 
 HTTP MITM-прокси с подменой TLS/HTTP-2 отпечатков (JA3/JA4 + Akamai) и кастомным User-Agent. Построен на Rust + [hudsucker](https://github.com/omjadas/hudsucker).
 
+> ⚠️ **Без Firefox Multi-Account Containers прикол пропадает.** Контейнеры позволяют одновременно использовать разные JA3/JA4-отпечатки в разных вкладках. Без них весь браузер ходит через один прокси с одним фингерпринтом — это палево и бесполезно для мультиаккаунтинга.
+
 ## Архитектура
 
 ```
-Firefox(Proxy container) → MITM Proxy (127.0.0.1:8001) → v2rayN/SOCKS5 (127.0.0.1:10808) → .. → Интернет
+Firefox Container A (VPN)  → MITM Proxy :8001 → v2rayN/SOCKS5 :10808 → VPN → Интернет
+Firefox Container B (Рунет) → Интернет
 ```
 
 Прокси перехватывает HTTPS-трафик, динамически генерирует сертификаты для каждого домена (через собственный CA), модифицирует HTTP-заголовки и проксирует соединения через upstream SOCKS5.
@@ -23,8 +26,9 @@ Firefox(Proxy container) → MITM Proxy (127.0.0.1:8001) → v2rayN/SOCKS5 (127.
 
 - Rust (edition 2021)
 - NixOS (для systemd-интеграции) или любой Linux
-- Firefox (для работы с CA)
-- v2rayN / любой SOCKS5-прокси на `127.0.0.1:10808`
+- Firefox + [Multi-Account Containers](https://addons.mozilla.org/firefox/addon/multi-account-containers/)
+- [Container Proxy](https://addons.mozilla.org/firefox/addon/container-proxy/) (или аналог) для привязки прокси к контейнерам
+- v2rayN / любой SOCKS5-прокси
 
 ## Установка
 
@@ -50,17 +54,44 @@ cargo run
 
 ## Настройка Firefox
 
-1. Открой **Настройки → Сеть → Настроить...**
-2. Выбери **Ручная настройка прокси**:
-   - HTTP-прокси: `127.0.0.1`, порт `8001`
-   - ☑ Использовать этот прокси для всех протоколов
-3. Импортируй CA:
-   - Открой `about:preferences#privacy` → **Сертификаты** → **Просмотр сертификатов...**
-   - Вкладка **Центры сертификации** → **Импортировать...**
-   - Выбери `ca-cert.pem`
-   - ☑ Доверять при идентификации веб-сайтов
-   - ☑ Доверять при идентификации разработчиков ПО
-4. **Перезапусти Firefox**
+### 1. Установи расширения
+
+- [Firefox Multi-Account Containers](https://addons.mozilla.org/firefox/addon/multi-account-containers/)
+- [Container Proxy](https://addons.mozilla.org/firefox/addon/container-proxy/)
+
+### 2. Создай контейнеры
+
+- **VPN** — для трафика через VPN/зарубежный SOCKS5
+- **Рунет** — для трафика через российский айпи
+
+### 3. Назначь прокси через Container Proxy
+
+- Контейнер **VPN** → `127.0.0.1:8001`
+- Контейнер **Рунет** → `Directly`
+
+
+### 4. Импортируй CA
+
+- Открой `about:preferences#privacy` → **Сертификаты** → **Просмотр сертификатов...**
+- Вкладка **Центры сертификации** → **Импортировать...**
+- Выбери `ca-cert.pem`
+- ☑ Доверять при идентификации веб-сайтов
+- ☑ Доверять при идентификации разработчиков ПО
+- **Перезапусти Firefox**
+
+## Почему именно контейнеры?
+
+Без контейнеров весь Firefox ходит через один прокси — и у тебя **один JA3/JA4 на все вкладки**. Это палево:
+- Ты зашёл в аккаунт А с отпечатком X
+- Ты зашёл в аккаунт Б с тем же отпечатком X
+- Сайт связывает аккаунты по fingerprint
+
+**С контейнерами:**
+- Аккаунт А в контейнере VPN → JA3 `24924417...`, IP из Нидерландов
+- Аккаунт Б в контейнере Рунет → JA3 `868929d9...`, IP из Москвы
+
+
+Каждый контейнер — изолированная среда с **своими** cookies, localStorage, прокси и fingerprint'ом.
 
 ## Настройка NixOS (Systemd)
 
@@ -73,9 +104,9 @@ let
   socks5-mitm = pkgs.rustPlatform.buildRustPackage {
     pname = "socks5-tls-ja";
     version = "0.1.0";
-    src = /home/YOUR_USER/socks5-tls-ja;
+    src = /home/YOUR_USER/mitm-proxy-ja3-ja4;
     cargoLock = {
-      lockFile = /home/YOUR_USER/socks5-tls-ja/Cargo.lock;
+      lockFile = /home/YOUR_USER/mitm-proxy-ja3-ja4/Cargo.lock;
     };
     nativeBuildInputs = [ pkgs.pkg-config ];
     buildInputs = [ pkgs.openssl ];
@@ -111,10 +142,10 @@ in
 
 ```bash
 # Если переносишь существующие сертификаты:
-sudo cp ~/socks5-tls-ja/ca-cert.pem /var/lib/socks5-mitm/
-sudo cp ~/socks5-tls-ja/ca-key.pem /var/lib/socks5-mitm/
-sudo chown socks5-mitm:socks5-mitm /var/lib/socks5-mitm/ca-cert.
-sudo chown socks5-mitm:socks5-mitm /var/lib/socks5-mitm/ca-key.pem 
+sudo cp ~/mitm-proxy-ja3-ja4/ca-cert.pem /var/lib/socks5-mitm/
+sudo cp ~/mitm-proxy-ja3-ja4/ca-key.pem /var/lib/socks5-mitm/
+sudo chown socks5-mitm:socks5-mitm /var/lib/socks5-mitm/ca-cert.pem
+sudo chown socks5-mitm:socks5-mitm /var/lib/socks5-mitm/ca-key.pem
 sudo chmod 600 /var/lib/socks5-mitm/ca-key.pem
 
 sudo systemctl restart socks5-mitm
@@ -169,11 +200,11 @@ const SOCKS5_UPSTREAM: &str = "127.0.0.1:10808";
 
 Зайди на [browserleaks.com](https://browserleaks.com) и сравни отпечатки:
 
-| | Без прокси | Через MITM |
-|---|---|---|
-| **JA3** | `868929d9...` | `24924417...` |
-| **JA4** | `t13d1517h2...` | `t13d0612h2...` |
-| **Akamai** | `6ea73faa...` | `39eaae6c...` |
+| | Без прокси | Контейнер VPN | Контейнер Рунет |
+|---|---|---|---|
+| **JA3** | `868929d9...` | `24924417...` | `24924417...` или свой |
+| **JA4** | `t13d1517h2...` | `t13d0612h2...` | `t13d0612h2...` или свой |
+| **Akamai** | `6ea73faa...` | `39eaae6c...` | `39eaae6c...` или свой |
 
 ## Лицензия
 

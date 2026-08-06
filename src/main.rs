@@ -34,12 +34,38 @@ impl HttpHandler for MitmHandler {
         _ctx: &HttpContext,
         mut req: Request<Body>,
     ) -> RequestOrResponse {
-        req.headers_mut().insert(
-            header::USER_AGENT,
-            "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/128.0"
-                .parse()
-                .unwrap(),
-        );
+        let is_mobile = if let Some(ua) = req.headers().get(header::USER_AGENT) {
+            let ua_str = ua.to_str().unwrap_or_default().to_lowercase();
+            ua_str.contains("android") || ua_str.contains("iphone") || ua_str.contains("mobile")
+        } else {
+            false
+        };
+
+        if is_mobile {
+      
+            req.headers_mut().insert(
+                header::USER_AGENT,
+                "Mozilla/5.0 (Android 14; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0"
+                    .parse()
+                    .unwrap(),
+            );
+            req.headers_mut().insert(
+                "sec-ch-ua-mobile",
+                "?1".parse().unwrap(),
+            );
+        } else {
+          
+            req.headers_mut().insert(
+                header::USER_AGENT,
+                "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+                    .parse()
+                    .unwrap(),
+            );
+            req.headers_mut().insert(
+                "sec-ch-ua-mobile",
+                "?0".parse().unwrap(),
+            );
+        }
 
         req.into()
     }

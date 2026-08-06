@@ -1,5 +1,5 @@
 [package]
-name = "socks5-tls-ja"
+name = "mitm-proxy-ja3-ja4"
 version = "0.1.0"
 edition = "2021"
 

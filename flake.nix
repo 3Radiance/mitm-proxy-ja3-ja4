@@ -1,45 +1,70 @@
 {
-  description = "Development environment for Rust";
+  description = "FHS Rust development environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    rust-overlay.url = "github:oxalica/rust-overlay";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
+  outputs = { self, nixpkgs, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs {
-          inherit system overlays;
-        };
+        pkgs = import nixpkgs { inherit system; };
+        proxyUrl = "http://127.0.0.1:10808";
+        fhs = pkgs.buildFHSEnv {
+          name = "rust-doh-env";
 
-        # Используем стабильный Rust с дополнительными компонентами
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
+          targetPkgs = pkgs: with pkgs; [
+            # Rust & Cargo
+            rustc
+            cargo
+            rust-analyzer
+
+            # C/C++ & LLVM / Clang
+            gcc
+            clang
+            llvmPackages.libclang
+
+            # Build tools
+            cmake
+            gnumake
+            pkg-config
+            ninja
+            go
+
+            # System libs
+            glibc
+            glibc.dev
+            openssl
+            openssl.dev
+            libunwind
+            zlib
+          ];
+
+          profile = ''
+            export HTTP_PROXY="${proxyUrl}"
+            export HTTPS_PROXY="${proxyUrl}"
+            export http_proxy="${proxyUrl}"
+            export https_proxy="${proxyUrl}"
+            export ALL_PROXY="${proxyUrl}"
+            export all_proxy="${proxyUrl}"
+
+            export RUST_SRC_PATH="${pkgs.rustPlatform.rustLibSrc}"
+
+            export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+            export BINDGEN_EXTRA_CLANG_ARGS="-I${pkgs.glibc.dev}/include"
+
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="gcc"
+            export RUSTFLAGS="-C linker=gcc"
+          '';
+
+          runScript = "zsh";
         };
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            # Rust ecosystem
-            rustToolchain
-
-            # Системные либы и утилиты, необходимые для сборки сетевых сокетов/С++
-            pkg-config
-            openssl
-            gcc
-            gdb
-          ];
-
-          # Переменные окружения, чтобы rust-analyzer видел исходники stdlib
-          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
-
-          shellHook = ''
-            echo "🦀 Rust dev environment loaded!"
-            rustc --version
-          '';
+          nativeBuildInputs = [ fhs ];
+          shellHook = "exec rust-doh-env";
         };
       }
     );

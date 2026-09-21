@@ -1,0 +1,108 @@
+{
+    "firefox_153_linux": {
+        "tcp": {
+            "ttl": 64,
+            "window_size": 64240,
+            "mss": 1460,
+            "window_scale": 7,
+            "tcp_options_order": [
+                "mss",
+                "sack_perm",
+                "timestamp",
+                "nop",
+                "wscale"
+            ]
+        },
+        "tls": {
+            "min_version": "TLS1.2",
+            "max_version": "TLS1.3",
+            "cipher_suites": [
+                "TLS_AES_128_GCM_SHA256",
+                "TLS_CHACHA20_POLY1305_SHA256",
+                "TLS_AES_256_GCM_SHA256",
+                "ECDHE_ECDSA_AES128_GCM_SHA256",
+                "ECDHE_RSA_AES128_GCM_SHA256"
+            ],
+            "alpn": [
+                "h2",
+                "http/1.1"
+            ],
+            "curves": [
+                "X25519",
+                "P-256",
+                "P-384"
+            ],
+            "signature_algorithms": [
+                "ecdsa_secp256r1_sha256",
+                "rsa_pss_rsae_sha256",
+                "rsa_pkcs1_sha256"
+            ],
+            "extensions_order": [
+                "server_name",
+                "extended_master_secret",
+                "renegotiation_info",
+                "supported_groups",
+                "ec_point_formats",
+                "session_ticket",
+                "application_layer_protocol_negotiation",
+                "status_request",
+                "signature_algorithms",
+                "supported_versions",
+                "key_share"
+            ],
+            "cert_compression": [
+                "brotli"
+            ],
+            "grease_enabled": false,
+            "enable_ech": true
+        },
+        "http2": {
+            "settings": {
+                "header_table_size": 65536,
+                "enable_push": false,
+                "max_concurrent_streams": 100,
+                "initial_window_size": 131072,
+                "max_frame_size": 16384
+            },
+            "settings_order": [
+                "HEADER_TABLE_SIZE",
+                "INITIAL_WINDOW_SIZE",
+                "MAX_FRAME_SIZE",
+                "MAX_CONCURRENT_STREAMS"
+            ],
+            "connection_window_update": 12517377,
+            "pseudo_headers_order": [
+                ":method",
+                ":path",
+                ":authority",
+                ":scheme"
+            ],
+            "headers_order": [
+                "user-agent",
+                "accept",
+                "accept-language",
+                "accept-encoding",
+                "referer",
+                "upgrade-insecure-requests",
+                "sec-fetch-dest",
+                "sec-fetch-mode",
+                "sec-fetch-site",
+                "priority",
+                "te"
+            ],
+            "http_headers": {
+                "user-agent": "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0",
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "accept-language": "en-US,en;q=0.5",
+                "accept-encoding": "gzip, deflate, br, zstd",
+                "upgrade-insecure-requests": "1",
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "none",
+                "sec-fetch-user": "?1",
+                "priority": "u=0, i",
+                "te": "trailers"
+            }
+        }
+    }
+}

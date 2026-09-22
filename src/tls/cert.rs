@@ -74,7 +74,6 @@ impl MitmCa {
 
         let cert_pair = (x509, pkey);
         self.cache.insert(domain.to_string(), cert_pair.clone());
-        println!("[CA] Generated & cached cert for: {}", domain);
 
         Ok(cert_pair)
     }

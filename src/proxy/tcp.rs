@@ -1,12 +1,12 @@
+use crate::config::AppConfig;
+use crate::tls;
+use crate::Data;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
-
-use crate::tls;
-use crate::Data;
 
 pub const HTTP_502_BAD_GATEWAY: &[u8] = b"HTTP/1.1 502 Bad Gateway\r\n\
 Content-Type: text/plain\r\n\
@@ -27,7 +27,10 @@ pub enum ConnectionStatus {
     Failure(String),
 }
 
-pub async fn connection(data: Arc<Data>) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn connection(
+    data: Arc<Data>,
+    config: Arc<AppConfig>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let addr = format!("127.0.0.1:{}", data.port);
     let socket = TcpListener::bind(addr).await?;
     println!("[TCP] Listening on {}", data.port);

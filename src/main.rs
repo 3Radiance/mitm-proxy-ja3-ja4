@@ -1,15 +1,21 @@
+mod config;
 mod proxy;
 mod tls;
 
-use crate::tls::cert::MitmCa;
 use clap::Parser;
+use std::path::PathBuf;
 use std::sync::Arc;
+
+use crate::config::AppConfig;
+use crate::tls::cert::MitmCa;
 
 #[derive(Parser, Debug)]
 struct Args {
-    #[arg(long, default_value_t = 9090)]
+    #[arg(short, long)]
+    config: Option<PathBuf>,
+    #[arg(short, long, default_value_t = 9090)]
     port: u16,
-    #[arg(long)]
+    #[arg(short, long)]
     upstream: Option<String>,
 }
 
@@ -36,6 +42,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         ca: ca.clone(),
         port: args.port,
     });
-    proxy::tcp::connection(data).await?;
+    match args.config {
+        Some(path) => {
+            let config = Arc::new(AppConfig::load_from_file(path.to_str().unwrap())?);
+            println!("[INFO] Loaded config: {:#?}", config);
+            proxy::tcp::connection(data, config).await?;
+        }
+        None => {
+            return Err("Pass the configuration file using the -c flag"
+                .to_string()
+                .into());
+        }
+    }
     Ok(())
 }

@@ -20,11 +20,22 @@ fn get_upstream(args: &Args) -> Option<String> {
     }
 }
 
+struct Data {
+    upstream: Arc<Option<String>>,
+    ca: Arc<MitmCa>,
+    port: u16,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
     let upstream = get_upstream(&args);
     let ca = Arc::new(MitmCa::load_or_create()?);
-    proxy::tcp::connection(ca, Arc::new(upstream), args.port).await?;
+    let data = Arc::new(Data {
+        upstream: Arc::new(upstream),
+        ca: ca.clone(),
+        port: args.port,
+    });
+    proxy::tcp::connection(data).await?;
     Ok(())
 }

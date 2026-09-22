@@ -1,4 +1,6 @@
+use crate::proxy::tcp::{ConnectionStatus, HTTP_403_FORBIDDEN};
 use std::error::Error;
+use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -7,6 +9,20 @@ pub struct HttpPacket {
     pub path: String,
     pub headers: Vec<(String, String)>,
     pub header_len: usize,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct HttpPacketRes {
+    pub code: u16,
+    pub reason: String,
+    pub headers: Vec<(String, String)>,
+    pub header_len: usize,
+}
+
+pub enum ParseResult<T> {
+    Complete(T),
+    Partial,
 }
 
 impl HttpPacket {
@@ -18,36 +34,83 @@ impl HttpPacket {
         }
         None
     }
-}
 
-pub enum ParseResult {
-    Complete(HttpPacket),
-    Partial,
-}
+    pub fn parse(buf: &[u8]) -> Result<ParseResult<HttpPacket>, Box<dyn Error + Send + Sync>> {
+        let mut headers = [httparse::EMPTY_HEADER; 64];
 
-pub fn parse(buf: &[u8]) -> Result<ParseResult, Box<dyn Error + Send + Sync>> {
-    let mut headers = [httparse::EMPTY_HEADER; 64];
-
-    let mut req = httparse::Request::new(&mut headers[..]);
-    match req.parse(buf)? {
-        httparse::Status::Complete(len) => {
-            let parsed = HttpPacket {
-                method: req.method.unwrap_or("").to_string(),
-                path: req.path.unwrap_or("").to_string(),
-                headers: req
-                    .headers
-                    .iter()
-                    .map(|h| {
-                        (
-                            h.name.to_string(),
-                            String::from_utf8_lossy(h.value).to_string(),
-                        )
-                    })
-                    .collect(),
-                header_len: len,
-            };
-            Ok(ParseResult::Complete(parsed))
+        let mut req = httparse::Request::new(&mut headers[..]);
+        match req.parse(buf)? {
+            httparse::Status::Complete(len) => {
+                let parsed = HttpPacket {
+                    method: req.method.unwrap_or("").to_string(),
+                    path: req.path.unwrap_or("").to_string(),
+                    headers: req
+                        .headers
+                        .iter()
+                        .map(|h| {
+                            (
+                                h.name.to_string(),
+                                String::from_utf8_lossy(h.value).to_string(),
+                            )
+                        })
+                        .collect(),
+                    header_len: len,
+                };
+                Ok(ParseResult::Complete(parsed))
+            }
+            httparse::Status::Partial => Ok(ParseResult::Partial),
         }
-        httparse::Status::Partial => Ok(ParseResult::Partial),
+    }
+
+    pub async fn check_method(
+        packet: &HttpPacket,
+        mut client: TcpStream,
+    ) -> Result<ConnectionStatus, Box<dyn Error + Send + Sync>> {
+        if packet.method != "CONNECT" {
+            let peer_addr = client
+                .peer_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+
+            client.write_all(HTTP_403_FORBIDDEN).await?;
+            client.flush().await?;
+
+            let log_msg = format!(
+                "Rejected non-CONNECT request: method: '{}', path: '{}', from {}",
+                packet.method, packet.path, peer_addr
+            );
+
+            return Ok(ConnectionStatus::Failure(log_msg));
+        }
+        Ok(ConnectionStatus::Success(client))
+    }
+}
+
+impl HttpPacketRes {
+    pub fn parse(buf: &[u8]) -> Result<ParseResult<HttpPacketRes>, Box<dyn Error + Send + Sync>> {
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut resp = httparse::Response::new(&mut headers);
+
+        match resp.parse(buf)? {
+            httparse::Status::Complete(len) => {
+                let parsed = HttpPacketRes {
+                    code: resp.code.unwrap_or(0),
+                    reason: resp.reason.unwrap_or("").to_string(),
+                    headers: resp
+                        .headers
+                        .iter()
+                        .map(|h| {
+                            (
+                                h.name.to_string(),
+                                String::from_utf8_lossy(h.value).to_string(),
+                            )
+                        })
+                        .collect(),
+                    header_len: len,
+                };
+                Ok(ParseResult::Complete(parsed))
+            }
+            httparse::Status::Partial => Ok(ParseResult::Partial),
+        }
     }
 }

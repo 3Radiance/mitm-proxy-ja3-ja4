@@ -7,9 +7,9 @@ edition = "2021"
 tokio = { version = "1", features = ["full"] }
 httparse = "1.8"
 rcgen = "0.13"
-boring = "4.0"
+btls = "0.5"
 time = "0.3"
-tokio-boring = "4.0"
+tokio-btls = "0.5"
 h2 = "0.4"
 dashmap = "6.0"
 clap = { version = "4", features = ["derive"] }

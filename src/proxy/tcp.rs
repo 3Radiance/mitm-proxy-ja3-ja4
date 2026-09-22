@@ -5,42 +5,38 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-use super::http;
 use crate::tls;
-use crate::tls::cert::MitmCa;
+use crate::Data;
 
-const HTTP_502_BAD_GATEWAY: &[u8] = b"HTTP/1.1 502 Bad Gateway\r\n\
+pub const HTTP_502_BAD_GATEWAY: &[u8] = b"HTTP/1.1 502 Bad Gateway\r\n\
 Content-Type: text/plain\r\n\
 Content-Length: 25\r\n\
 Connection: close\r\n\
 \r\n\
 502 Bad Gateway: Upstream Error";
 
-const HTTP_200_OK: &[u8] = b"HTTP/1.1 200 Connection Established\r\n\r\n";
+pub const HTTP_200_OK: &[u8] = b"HTTP/1.1 200 Connection Established\r\n\r\n";
 
-use super::http::{HttpPacket, ParseResult};
+pub const HTTP_403_FORBIDDEN: &[u8] =
+    b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+use super::http::{HttpPacket, HttpPacketRes, ParseResult};
 
 pub enum ConnectionStatus {
     Success(TcpStream),
     Failure(String),
 }
 
-pub async fn connection(
-    ca: Arc<MitmCa>,
-    upstream: Arc<Option<String>>,
-    port: u16,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let addr = format!("127.0.0.1:{}", port);
+pub async fn connection(data: Arc<Data>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let addr = format!("127.0.0.1:{}", data.port);
     let socket = TcpListener::bind(addr).await?;
-    println!("[TCP] Listening on {}", port);
-
+    println!("[TCP] Listening on {}", data.port);
     loop {
         let (client, addr) = socket.accept().await?;
-        let ca_clone = ca.clone();
-        let upsteam_clone = upstream.clone();
+        let data_clone = Arc::clone(&data);
         println!("[TCP] New Connection: {}", addr);
         tokio::spawn(async move {
-            if let Err(e) = handle(client, ca_clone, upsteam_clone).await {
+            if let Err(e) = handle(client, data_clone).await {
                 eprintln!("[TCP] Error: {e}");
             }
         });
@@ -49,24 +45,40 @@ pub async fn connection(
 
 async fn handle(
     mut client: TcpStream,
-    ca: Arc<MitmCa>,
-    upstream: Arc<Option<String>>,
+    data: Arc<Data>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let ca_clone = Arc::clone(&ca);
+    let ca_clone = Arc::clone(&data.ca);
+    let mut buff: Vec<u8> = Vec::new();
     let mut buf = [0u8; 1024];
     let packet = loop {
         let n = client.read(&mut buf).await?;
+
         if n == 0 {
             return Err("[TCP] Connection closed".into());
         }
-        match http::parse(&buf[..n])? {
+
+        buff.extend_from_slice(&buf[..n]);
+
+        if buff.len() > 8192 {
+            return Err("[TCP] HTTP Header too large".into());
+        }
+
+        match HttpPacket::parse(&buff)? {
             ParseResult::Complete(p) => break p,
             ParseResult::Partial => continue,
         }
     };
 
-    let remote = match connect_proxy(packet, upstream).await? {
+    match HttpPacket::check_method(&packet, client).await? {
+        ConnectionStatus::Success(stream) => client = stream,
+        ConnectionStatus::Failure(reason) => {
+            eprintln!("[TCP] Connection failure: {}", reason);
+            return Ok(());
+        }
+    }
+
+    let remote = match upstream_connect(packet, data.upstream.clone()).await? {
         ConnectionStatus::Success(stream) => stream,
         ConnectionStatus::Failure(reason) => {
             eprintln!("[TCP] Connection failure: {}", reason);
@@ -88,7 +100,7 @@ async fn handle(
     Ok(())
 }
 
-async fn connect_proxy(
+async fn upstream_connect(
     packet: HttpPacket,
     upstream: Arc<Option<String>>,
 ) -> Result<ConnectionStatus, Box<dyn Error + Send + Sync>> {
@@ -102,46 +114,62 @@ async fn connect_proxy(
     };
 
     match &*upstream {
-        Some(proxy_addr) => {
-            let mut stream = match TcpStream::connect(proxy_addr).await {
-                Ok(s) => s,
-                Err(e) => return Ok(ConnectionStatus::Failure(e.to_string())),
-            };
-
-            let connect_request = format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n\r\n", host, host);
-
-            if let Err(e) = stream.write_all(connect_request.as_bytes()).await {
-                return Ok(ConnectionStatus::Failure(format!(
-                    "Proxy Failed to send CONNECT: {}",
-                    e
-                )));
-            }
-
-            let mut buf = [0u8; 1024];
-            let n = match stream.read(&mut buf).await {
-                Ok(n) => n,
-                Err(e) => {
-                    return Ok(ConnectionStatus::Failure(format!(
-                        "Proxy Failed to read response: {}",
-                        e
-                    )));
-                }
-            };
-
-            let response = String::from_utf8_lossy(&buf[..n]);
-            if !response.starts_with("HTTP/1.1 200") && !response.starts_with("HTTP/1.0 200") {
-                return Ok(ConnectionStatus::Failure(format!(
-                    "Proxy rejected: {}",
-                    response.lines().next().unwrap_or("unknown")
-                )));
-            }
-
-            Ok(ConnectionStatus::Success(stream))
-        }
-
+        Some(proxy_addr) => upstream_connect_helper(host, proxy_addr).await,
         None => match TcpStream::connect(&host).await {
             Ok(stream) => Ok(ConnectionStatus::Success(stream)),
             Err(e) => Ok(ConnectionStatus::Failure(e.to_string())),
         },
+    }
+}
+
+async fn upstream_connect_helper(
+    host: &str,
+    upstream: &str,
+) -> Result<ConnectionStatus, Box<dyn Error + Send + Sync>> {
+    let mut stream = match TcpStream::connect(upstream).await {
+        Ok(s) => s,
+        Err(e) => return Ok(ConnectionStatus::Failure(e.to_string())),
+    };
+
+    let connect_request = format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n\r\n", host, host);
+
+    if let Err(e) = stream.write_all(connect_request.as_bytes()).await {
+        return Ok(ConnectionStatus::Failure(format!(
+            "Proxy Failed to send CONNECT: {}",
+            e
+        )));
+    }
+
+    let mut buff: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 1024];
+
+    let response_packet = loop {
+        let n = stream.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(ConnectionStatus::Failure(
+                "Proxy closed connection".to_string(),
+            ));
+        }
+        buff.extend_from_slice(&buf[..n]);
+
+        if buff.len() > 8192 {
+            return Ok(ConnectionStatus::Failure(
+                "Proxy response too large".to_string(),
+            ));
+        }
+
+        match HttpPacketRes::parse(&buff)? {
+            ParseResult::Complete(p) => break p,
+            ParseResult::Partial => continue,
+        }
+    };
+
+    if response_packet.code == 200 {
+        Ok(ConnectionStatus::Success(stream))
+    } else {
+        Ok(ConnectionStatus::Failure(format!(
+            "Proxy returned status {}: {}",
+            response_packet.code, response_packet.reason
+        )))
     }
 }

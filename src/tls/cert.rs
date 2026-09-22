@@ -3,10 +3,7 @@ use rcgen::{BasicConstraints, Certificate, CertificateParams, DnType, IsCa, KeyP
 use std::path::Path;
 use time::OffsetDateTime;
 
-pub type BoringCertPair = (
-    boring::x509::X509,
-    boring::pkey::PKey<boring::pkey::Private>,
-);
+pub type BoringCertPair = (btls::x509::X509, btls::pkey::PKey<btls::pkey::Private>);
 
 pub struct MitmCa {
     ca_cert: Certificate,
@@ -72,8 +69,8 @@ impl MitmCa {
         let (cert_pem, key_pem) = self.issue_cert_for_domain(domain)?;
         println!("[CA] Issuing cert for {}", domain);
 
-        let x509 = boring::x509::X509::from_pem(cert_pem.as_bytes())?;
-        let pkey = boring::pkey::PKey::private_key_from_pem(key_pem.as_bytes())?;
+        let x509 = btls::x509::X509::from_pem(cert_pem.as_bytes())?;
+        let pkey = btls::pkey::PKey::private_key_from_pem(key_pem.as_bytes())?;
 
         let cert_pair = (x509, pkey);
         self.cache.insert(domain.to_string(), cert_pair.clone());

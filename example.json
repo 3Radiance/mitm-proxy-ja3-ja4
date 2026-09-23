@@ -38,9 +38,10 @@
                 "http/1.1"
             ],
             "curves": [
-                "X25519",
                 "P-256",
-                "P-384"
+                "P-384",
+                "P-521",
+                "X25519"
             ],
             "signature_algorithms": [
                 "ecdsa_secp256r1_sha256",

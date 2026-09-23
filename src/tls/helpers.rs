@@ -37,33 +37,6 @@ pub fn set_select_certificate_callback(
     });
 }
 
-pub fn set_cipher_suites(
-    builder: &mut SslContextBuilder,
-    tls: &TlsConfig,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    builder.set_preserve_tls13_cipher_list(true);
-
-    let ciphers = tls.cipher_suites.join(":");
-
-    builder
-        .set_strict_cipher_list(&ciphers)
-        .map_err(|e| format!("[TLS] Failed to set cipher list: {e}"))?;
-
-    Ok(())
-}
-
-pub fn set_alpn_protos(
-    builder: &mut SslContextBuilder,
-    alpn_bytes: Option<Vec<u8>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if let Some(alpn) = alpn_bytes {
-        builder
-            .set_alpn_protos(&alpn)
-            .map_err(|e| format!("[TLS] Failed to set ALPN: {e}"))?;
-    }
-    Ok(())
-}
-
 pub fn set_alpn_select_callback(builder: &mut SslContextBuilder, alpn_bytes: Vec<u8>) {
     builder.set_alpn_select_callback(move |_ssl, client_protos| {
         let mut client_cursor = client_protos;
@@ -91,4 +64,42 @@ pub fn set_alpn_select_callback(builder: &mut SslContextBuilder, alpn_bytes: Vec
 
         Err(AlpnError::NOACK)
     });
+}
+
+pub fn set_cipher_suites(
+    builder: &mut SslContextBuilder,
+    tls: &Arc<TlsConfig>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    builder.set_preserve_tls13_cipher_list(true);
+
+    let ciphers = tls.cipher_suites.join(":");
+
+    builder
+        .set_strict_cipher_list(&ciphers)
+        .map_err(|e| format!("[TLS] Failed to set cipher list: {e}"))?;
+
+    Ok(())
+}
+
+pub fn set_alpn_protos(
+    builder: &mut SslContextBuilder,
+    alpn_bytes: Option<Vec<u8>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(alpn) = alpn_bytes {
+        builder
+            .set_alpn_protos(&alpn)
+            .map_err(|e| format!("[TLS] Failed to set ALPN: {e}"))?;
+    }
+    Ok(())
+}
+
+pub fn set_curves_list(
+    builder: &mut SslContextBuilder,
+    tls: &Arc<TlsConfig>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let curve_list = tls.curves.join(":");
+    builder
+        .set_curves_list(&curve_list)
+        .map_err(|e| format!("[TLS] Failed to set curves: {e}"))?;
+    Ok(())
 }

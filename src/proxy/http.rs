@@ -76,8 +76,15 @@ impl HttpPacket {
             client.flush().await?;
 
             let log_msg = format!(
-                "Rejected non-CONNECT request: method: '{}', path: '{}', from {}",
-                packet.method, packet.path, peer_addr
+                "Rejected non-CONNECT request: method: '{}', path: '{}', from: {}, headers: {:#?}",
+                packet.method,
+                packet.path,
+                peer_addr,
+                packet
+                    .headers
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect::<Vec<String>>()
             );
 
             return Ok(ConnectionStatus::Failure(log_msg));

@@ -1,6 +1,6 @@
 mod config;
+mod fingerprint;
 mod proxy;
-mod tls;
 
 use clap::Parser;
 use std::path::PathBuf;

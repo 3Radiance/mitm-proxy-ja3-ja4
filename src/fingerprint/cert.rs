@@ -1,5 +1,8 @@
 use dashmap::DashMap;
 use rcgen::{BasicConstraints, Certificate, CertificateParams, DnType, IsCa, KeyPair, SanType};
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use time::OffsetDateTime;
 
@@ -33,7 +36,7 @@ impl MitmCa {
             let cert = Self::build_ca_certificate(&keypair)?;
 
             std::fs::write(cert_path, cert.pem())?;
-            std::fs::write(key_path, keypair.serialize_pem())?;
+            Self::write_key_secure(key_path, &keypair.serialize_pem())?;
 
             (cert, keypair)
         };
@@ -43,6 +46,20 @@ impl MitmCa {
             ca_keypair,
             cache: DashMap::new(),
         })
+    }
+
+    fn write_key_secure(
+        path: &Path,
+        pem: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(pem.as_bytes())?;
+        Ok(())
     }
 
     fn build_ca_certificate(

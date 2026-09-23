@@ -1,3 +1,4 @@
+use btls::ssl::ExtensionType;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -55,8 +56,8 @@ pub struct TlsConfig {
     pub cert_compression: Vec<String>,
     pub grease_enabled: bool,
     pub enable_ech: bool,
-    #[serde(default = "default_record_size_limit")]
-    pub record_size_limit: u16,
+    #[serde(default)]
+    pub record_size_limit: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -103,6 +104,38 @@ impl TlsConfig {
         }
         bytes
     }
+
+    pub fn parse_extension(s: &str) -> Result<ExtensionType, String> {
+        if let Some(hex) = s.strip_prefix("0x") {
+            let code = u16::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+            return Ok(ExtensionType::from(code));
+        }
+        match s {
+            "server_name" => Ok(ExtensionType::SERVER_NAME),
+            "status_request" => Ok(ExtensionType::STATUS_REQUEST),
+            "supported_groups" => Ok(ExtensionType::SUPPORTED_GROUPS),
+            "ec_point_formats" => Ok(ExtensionType::EC_POINT_FORMATS),
+            "signature_algorithms" => Ok(ExtensionType::SIGNATURE_ALGORITHMS),
+            "alpn" => Ok(ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION),
+            "padding" => Ok(ExtensionType::PADDING),
+            "extended_master_secret" => Ok(ExtensionType::EXTENDED_MASTER_SECRET),
+            "session_ticket" => Ok(ExtensionType::SESSION_TICKET),
+            "supported_versions" => Ok(ExtensionType::SUPPORTED_VERSIONS),
+            "psk_key_exchange_modes" => Ok(ExtensionType::PSK_KEY_EXCHANGE_MODES),
+            "signature_algorithms_cert" => Ok(ExtensionType::SIGNATURE_ALGORITHMS_CERT),
+            "key_share" => Ok(ExtensionType::KEY_SHARE),
+            "renegotiation_info" => Ok(ExtensionType::RENEGOTIATE),
+            "delegated_credentials" => Ok(ExtensionType::DELEGATED_CREDENTIAL),
+            "application_settings" => Ok(ExtensionType::APPLICATION_SETTINGS),
+            "encrypted_client_hello" => Ok(ExtensionType::ENCRYPTED_CLIENT_HELLO),
+            "record_size_limit" => Ok(ExtensionType::RECORD_SIZE_LIMIT),
+            "cert_compression" => Ok(ExtensionType::CERT_COMPRESSION),
+            "pre_shared_key" => Ok(ExtensionType::PRE_SHARED_KEY),
+            "early_data" => Ok(ExtensionType::EARLY_DATA),
+            "cookie" => Ok(ExtensionType::COOKIE),
+            _ => Err(format!("unknown extension: {s}")),
+        }
+    }
 }
 
 fn empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -111,10 +144,6 @@ where
 {
     let opt = Option::<String>::deserialize(deserializer)?;
     Ok(opt.filter(|s| !s.trim().is_empty()))
-}
-
-fn default_record_size_limit() -> u16 {
-    16384
 }
 
 fn default_port() -> u16 {

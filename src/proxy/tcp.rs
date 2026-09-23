@@ -1,7 +1,7 @@
 use super::http::*;
 use crate::config::*;
-use crate::tls;
-use crate::tls::cert::MitmCa;
+use crate::fingerprint;
+use crate::fingerprint::cert::MitmCa;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::{
@@ -46,14 +46,15 @@ pub async fn connection(config: AppConfig) -> Result<(), Box<dyn Error + Send + 
     println!("[TCP] Listening on {}", profile.config.port);
     loop {
         let (client, addr) = socket.accept().await?;
-        let tls = Arc::clone(&tls);
-        let http2 = Arc::clone(&http2);
+
+        let tls_clone = Arc::clone(&tls);
+        let http2_clone = Arc::clone(&http2);
         let ca_clone = Arc::clone(&ca);
         let upstream_clone = Arc::clone(&upstream);
 
         println!("[TCP] New Connection: {}", addr);
         tokio::spawn(async move {
-            if let Err(e) = handle(client, ca_clone, tls, http2, upstream_clone).await {
+            if let Err(e) = handle(client, ca_clone, tls_clone, http2_clone, upstream_clone).await {
                 eprintln!("[TCP] Error: {e}");
             }
         });
@@ -92,7 +93,7 @@ async fn handle(
     match HttpPacket::check_method(&packet, client).await? {
         ConnectionStatus::Success(stream) => client = stream,
         ConnectionStatus::Failure(reason) => {
-            eprintln!("[TCP] Connection failure: {}", reason);
+            eprintln!("[HTTP] {}", reason);
             return Ok(());
         }
     }
@@ -112,11 +113,11 @@ async fn handle(
     let tls1 = Arc::clone(&tls);
     let tls2 = Arc::clone(&tls);
 
-    let acceptor = tls::tls::create_ssl_acceptor(ca, tx, tls1)?;
-    let (mut client, selected_alpn) = tls::tls::handle_tls(client, acceptor).await?;
+    let acceptor = fingerprint::tls::create_ssl_acceptor(ca, tx, tls1)?;
+    let (mut client, selected_alpn) = fingerprint::tls::handle_tls(client, acceptor).await?;
     let sni = rx.recv().await.unwrap_or_else(|| "unknown".to_string());
     let mut remote =
-        tls::tls::create_ssl_acceptor_upstream(remote, &sni, tls2, selected_alpn).await?;
+        fingerprint::tls::create_ssl_acceptor_upstream(remote, &sni, tls2, selected_alpn).await?;
 
     tokio::io::copy_bidirectional(&mut client, &mut remote).await?;
 

@@ -1,6 +1,6 @@
 use crate::config::*;
-use crate::tls::cert::MitmCa;
-use crate::tls::helpers::*;
+use crate::fingerprint::cert::MitmCa;
+use crate::fingerprint::helpers::*;
 
 use btls::ssl::{Ssl, SslAcceptor, SslConnector, SslMethod};
 use std::pin::Pin;
@@ -34,6 +34,7 @@ pub async fn create_ssl_acceptor_upstream(
     set_alpn_protos(&mut builder, alpn)?;
     set_curves_list(&mut builder, &tls)?;
     set_sigalgs_list(&mut builder, &tls)?;
+    set_extensions_order(&mut builder, &tls)?;
 
     let connector = builder.build();
 

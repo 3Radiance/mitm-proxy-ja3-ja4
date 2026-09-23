@@ -1,5 +1,5 @@
 use crate::config::*;
-use crate::tls::cert::MitmCa;
+use crate::fingerprint::cert::MitmCa;
 
 use btls::ssl::{AlpnError, ClientHello, NameType, SelectCertError, SslContextBuilder};
 
@@ -112,5 +112,21 @@ pub fn set_sigalgs_list(
     builder
         .set_sigalgs_list(&sigalgs)
         .map_err(|e| format!("[TLS] Failed to set signature algorithms: {e}"))?;
+    Ok(())
+}
+
+pub fn set_extensions_order(
+    builder: &mut SslContextBuilder,
+    tls: &Arc<TlsConfig>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let ext = tls
+        .extensions_order
+        .iter()
+        .map(|e| TlsConfig::parse_extension(e))
+        .collect::<Result<Vec<_>, String>>()?;
+    builder
+        .set_extension_permutation(&ext)
+        .map_err(|e| format!("[TLS] Failed to set extension order: {e}"))?;
+
     Ok(())
 }

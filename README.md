@@ -12,7 +12,7 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 - **MITM (Man-in-the-Middle)** — Transparent HTTPS interception. It uses `rcgen` to dynamically issue and sign certificates on-the-fly, caching them via `dashmap` for performance.
 - **BoringSSL Integration** — Uses `btls` and `tokio-btls` for handling the TLS handshake and MITM interception.
-- **TLS Fingerprint Spoofing** — The upstream connection sets cipher suites, elliptic curves, and signature algorithms in strict, caller-defined order, loaded from a JSON config passed via `-c` / `--config <path>` (see `example.json` in the repository for the format). See the supported lists below: [ciphers](#supported-cipher-suites), [curves](#supported-curves), [signature algorithms](#supported-signature-algorithms).
+- **TLS Fingerprint Spoofing** — The upstream connection sets cipher suites, elliptic curves, and signature algorithms in strict, caller-defined order, loaded from a JSON config passed via `-c` / `--config <path>` (see `example.json` in the repository for the format). See the supported lists below: [ciphers](#supported-cipher-suites), [curves](#supported-curves), [signature algorithms](#supported-signature-algorithms), [extensions](#supported-extension-order-values).
 - **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method (configurable via CLI).
 - **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
 
@@ -148,6 +148,51 @@ rsa_pss_rsae_sha256
 rsa_pss_rsae_sha384
 rsa_pss_rsae_sha512
 ed25519
+```
+
+## Supported Extension Order Values
+
+The `extensions_order` field controls the position of each TLS extension in
+the outgoing ClientHello (`SSL_CTX_set_extension_order` under the hood).
+Every extension that is actually active in the handshake — enabled through
+`cipher_suites`, `curves`, `signature_algorithms`, `alpn`, etc. — should be
+listed here. **If an active extension is left out of `extensions_order`, its
+resulting position is undefined** — it is not guaranteed to be dropped,
+appended, or placed anywhere specific, and behavior isn't documented upstream.
+Always include every extension you enable.
+
+Full list of supported names:
+```
+server_name
+status_request
+ec_point_formats
+signature_algorithms
+srtp
+alpn
+padding
+extended_master_secret
+quic_transport_parameters_legacy
+quic_transport_parameters_standard
+cert_compression
+session_ticket
+supported_groups
+pre_shared_key
+early_data
+supported_versions
+cookie
+psk_key_exchange_modes
+certificate_authorities
+signature_algorithms_cert
+key_share
+renegotiation_info
+delegated_credentials
+application_settings
+application_settings_old
+encrypted_client_hello
+certificate_timestamp
+next_proto_neg
+channel_id
+record_size_limit
 ```
 
 ## License

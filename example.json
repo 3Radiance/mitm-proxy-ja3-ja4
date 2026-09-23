@@ -21,8 +21,6 @@
             ]
         },
         "tls": {
-            "min_version": "TLS1.2",
-            "max_version": "TLS1.3",
             "cipher_suites": [
                 "TLS_AES_128_GCM_SHA256",
                 "TLS_CHACHA20_POLY1305_SHA256",
@@ -58,6 +56,7 @@
                 "ec_point_formats",
                 "session_ticket",
                 "status_request",
+                "cert_compression",
                 "signature_algorithms",
                 "supported_versions",
                 "key_share"

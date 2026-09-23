@@ -46,8 +46,6 @@ pub struct TcpConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct TlsConfig {
-    pub min_version: String,
-    pub max_version: String,
     pub cipher_suites: Vec<String>,
     pub alpn: Vec<String>,
     pub curves: Vec<String>,

@@ -1,5 +1,6 @@
 use crate::config::*;
 use crate::fingerprint::cert::MitmCa;
+use crate::fingerprint::compression::{BrotliCompressor, ZlibCompressor, ZstdCompressor};
 
 use btls::ssl::{AlpnError, ClientHello, NameType, SelectCertError, SslContextBuilder};
 
@@ -128,5 +129,34 @@ pub fn set_extensions_order(
         .set_extension_permutation(&ext)
         .map_err(|e| format!("[TLS] Failed to set extension order: {e}"))?;
 
+    Ok(())
+}
+
+pub fn set_record_size_limit(builder: &mut SslContextBuilder, tls: &Arc<TlsConfig>) {
+    if let Some(limit) = tls.record_size_limit {
+        builder.set_record_size_limit(limit);
+    }
+}
+
+pub fn set_cert_compression(
+    builder: &mut SslContextBuilder,
+    tls: &Arc<TlsConfig>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for algo in &tls.cert_compression {
+        match algo.as_str() {
+            "brotli" => builder
+                .add_certificate_compression_algorithm(BrotliCompressor)
+                .map_err(|e| format!("[TLS] Failed to add brotli compression: {e}"))?,
+            "zlib" => builder
+                .add_certificate_compression_algorithm(ZlibCompressor)
+                .map_err(|e| format!("[TLS] Failed to add zlib compression: {e}"))?,
+            "zstd" => builder
+                .add_certificate_compression_algorithm(ZstdCompressor)
+                .map_err(|e| format!("[TLS] Failed to add zstd compression: {e}"))?,
+            other => {
+                return Err(format!("[TLS] Unknown cert compression algorithm: {other}").into())
+            }
+        }
+    }
     Ok(())
 }

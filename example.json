@@ -2,7 +2,7 @@
     "firefox_153_linux": {
         "config": {
             "port": 9090,
-            "upstream_proxy": "127.0.0.1:10808",
+            "upstream_proxy": null,
             "cert": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.crt",
             "key": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.key"
         },
@@ -25,6 +25,7 @@
             "max_version": "TLS1.3",
             "cipher_suites": [
                 "TLS_AES_128_GCM_SHA256",
+                "TLS_RSA_WITH_AES_128_GCM_SHA256",
                 "TLS_CHACHA20_POLY1305_SHA256",
                 "ECDHE-ECDSA-AES128-GCM-SHA256",
                 "ECDHE-RSA-AES128-GCM-SHA256",

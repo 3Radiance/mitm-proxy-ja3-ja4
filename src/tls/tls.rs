@@ -33,6 +33,7 @@ pub async fn create_ssl_acceptor_upstream(
     set_cipher_suites(&mut builder, &tls)?;
     set_alpn_protos(&mut builder, alpn)?;
     set_curves_list(&mut builder, &tls)?;
+    set_sigalgs_list(&mut builder, &tls)?;
 
     let connector = builder.build();
 

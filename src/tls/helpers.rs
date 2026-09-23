@@ -103,3 +103,14 @@ pub fn set_curves_list(
         .map_err(|e| format!("[TLS] Failed to set curves: {e}"))?;
     Ok(())
 }
+
+pub fn set_sigalgs_list(
+    builder: &mut SslContextBuilder,
+    tls: &Arc<TlsConfig>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let sigalgs = tls.signature_algorithms.join(":");
+    builder
+        .set_sigalgs_list(&sigalgs)
+        .map_err(|e| format!("[TLS] Failed to set signature algorithms: {e}"))?;
+    Ok(())
+}

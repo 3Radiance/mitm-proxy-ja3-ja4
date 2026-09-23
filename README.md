@@ -2,16 +2,17 @@
 
 [English](README.md) | [Русский](README.ru.md)
 
-An HTTP MITM proxy built with Rust, `tokio`, and `BoringSSL`.
+An HTTP MITM proxy built with Rust, `tokio`, and `btls`.
 
 > **Currently in MVP (Minimum Viable Product) stage.**
 
-This project has been completely rewritten to leverage `boring` (BoringSSL) for advanced TLS fingerprinting capabilities. At the moment, it functions as a transparent MITM proxy with upstream proxy support, but TLS fingerprint spoofing is currently static and uncontrolled.
+This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. At the moment, it functions as a transparent MITM proxy with upstream proxy support, but TLS fingerprint spoofing is currently static and uncontrolled.
 
 ## Features (Current Implementation)
 
 - **MITM (Man-in-the-Middle)** — Transparent HTTPS interception. It uses `rcgen` to dynamically issue and sign certificates on-the-fly, caching them via `dashmap` for performance.
-- **BoringSSL Integration** — Uses `boring` and `tokio-boring` for handling the TLS handshake and MITM interception.
+- **BoringSSL Integration** — Uses `btls` and `tokio-btls` for handling the TLS handshake and MITM interception.
+- **Cipher Suite Spoofing** — The only spoofing that actually works right now. The upstream connection sets the TLS cipher list in strict, caller-defined order, loaded from a JSON config passed via `-c` / `--config <path>` (see `example.json` in the repository for the format). See [supported ciphers](#supported-cipher-suites) below.
 - **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method (configurable via CLI).
 - **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
 
@@ -19,8 +20,8 @@ This project has been completely rewritten to leverage `boring` (BoringSSL) for 
 
 The current architecture is a foundation for highly advanced fingerprint spoofing:
 
-- **Dynamic Fingerprint Spoofing (JSON Profiles)** 
-  Implement granular, dynamic spoofing for TLS (JA3/JA4), HTTP/2 (Akamai), and TCP parameters. Configuration will be driven by JSON profiles (see `example.json` in the repository for the planned structure).
+- **Dynamic Fingerprint Spoofing (JSON Profiles)**
+  Extend the existing `-c` / `--config` JSON profile to also cover TLS extension order, HTTP/2 (Akamai), and TCP parameters — currently it only drives the cipher list.
 - **L4 TCP Fingerprinting (NFQueue)**
   Implement a Layer 4 module using Linux `nfqueue` (Netfilter Queue) to spoof TCP fingerprints, including TTL, TCP window size, MSS, window scaling, and the exact order of TCP options.
 
@@ -33,18 +34,17 @@ The current architecture is a foundation for highly advanced fingerprint spoofin
 ## Installation & Usage
 
 ### 1. Build
-
-`​`​`bash
+```bash
 git clone https://github.com/3Radiance/mitm-proxy-ja3-ja4.git
 cd mitm-proxy-ja3-ja4
 cargo build --release
-`​`​`
+```
 
 ### 2. Run
 
 You can start the proxy specifying the port and an optional upstream HTTP proxy.
 
-`​`​`bash
+```bash
 # Run on default port 9090
 cargo run --release
 
@@ -53,7 +53,12 @@ cargo run --release -- --port 8080
 
 # Run with an upstream HTTP proxy
 cargo run --release -- --upstream 127.0.0.1:10808
-`​`​`
+
+# Run with a JSON fingerprint profile (currently drives cipher suite order only)
+cargo run --release -- --config profile.json
+# or
+cargo run --release -- -c profile.json
+```
 
 Upon the first run, the proxy will generate the following CA files in the current directory:
 - `ca.crt` — Root CA certificate. You must import this into Firefox/your browser and trust it to identify websites.
@@ -61,10 +66,40 @@ Upon the first run, the proxy will generate the following CA files in the curren
 
 ## Architecture Highlights
 
-- `src/main.rs`: CLI entrypoint using `clap` for parsing `--port` and `--upstream`.
+- `src/main.rs`: CLI entrypoint using `clap` for parsing `--port`, `--upstream`, and `-c` / `--config` (JSON fingerprint profile).
 - `src/proxy/tcp.rs`: TCP connection handling, initial HTTP `CONNECT` parsing, upstream connection establishment, and bridging the raw sockets to the TLS MITM layer.
-- `src/tls/cert.rs`: On-the-fly certificate generation using `rcgen` and `boring::x509`, signed by the local CA and cached in a `DashMap`.
-- `src/tls/tls.rs`: BoringSSL acceptor configuration and handshake handling (`tokio-boring`).
+- `src/tls/cert.rs`: On-the-fly certificate generation using `rcgen` and `btls::x509`, signed by the local CA and cached in a `DashMap`.
+- `src/tls/tls.rs`: `btls` acceptor configuration and handshake handling (`tokio-btls`).
+
+## Supported Cipher Suites
+
+Full list (BoringSSL):
+```
+TLS_AES_128_GCM_SHA256
+TLS_AES_256_GCM_SHA384
+TLS_CHACHA20_POLY1305_SHA256
+TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA
+TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA
+TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA
+TLS_RSA_WITH_AES_128_GCM_SHA256
+TLS_RSA_WITH_AES_256_GCM_SHA384
+TLS_RSA_WITH_AES_128_CBC_SHA
+TLS_RSA_WITH_AES_256_CBC_SHA
+TLS_RSA_WITH_3DES_EDE_CBC_SHA
+TLS_PSK_WITH_AES_128_CBC_SHA
+TLS_PSK_WITH_AES_256_CBC_SHA
+TLS_ECDHE_PSK_WITH_AES_128_CBC_SHA
+TLS_ECDHE_PSK_WITH_AES_256_CBC_SHA
+TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256
+```
 
 ## License
 

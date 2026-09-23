@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     match args.config {
         Some(path) => {
-            let config = Arc::new(AppConfig::load_from_file(path.to_str().unwrap())?);
+            let config = AppConfig::load_from_file(path.to_str().unwrap())?;
             println!("[INFO] Loaded config: {:#?}", config);
             proxy::tcp::connection(data, config).await?;
         }

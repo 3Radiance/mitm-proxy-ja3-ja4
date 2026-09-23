@@ -1,4 +1,6 @@
+use crate::config::*;
 use crate::tls::cert::MitmCa;
+
 use btls::ssl::{
     select_next_proto, AlpnError, ClientHello, NameType, SelectCertError, Ssl, SslAcceptor,
     SslConnector, SslContextBuilder, SslMethod,
@@ -15,21 +17,17 @@ pub fn create_ssl_acceptor(
 ) -> Result<SslAcceptor, Box<dyn std::error::Error + Send + Sync>> {
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
     set_cert(ca, sni_tx, &mut builder);
-
-    // builder.set_alpn_select_callback(|_ssl, client_protos| {
-    //     const SERVER: &[u8] = b"\x02h2\x08http/1.1";
-    //     select_next_proto(SERVER, client_protos).ok_or(AlpnError::NOACK)
-    // });
     Ok(builder.build())
 }
 pub async fn create_ssl_acceptor_upstream(
     upstream: TcpStream,
     target_host: &str,
+    tls: Arc<TlsConfig>,
 ) -> Result<SslStream<TcpStream>, Box<dyn std::error::Error + Send + Sync>> {
     let mut builder = SslConnector::builder(SslMethod::tls())?;
     builder.set_default_verify_paths()?;
+    set_cipher_suites(&mut builder, &tls)?;
 
-    // builder.set_alpn_protos(b"\x02h2\x08http/1.1")?;
     let connector = builder.build();
 
     let ssl = connector.configure()?.into_ssl(target_host)?;
@@ -82,4 +80,19 @@ fn set_cert(
             }
         }
     });
+}
+
+fn set_cipher_suites(
+    builder: &mut SslContextBuilder,
+    tls: &TlsConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    builder.set_preserve_tls13_cipher_list(true);
+
+    let ciphers = tls.cipher_suites.join(":");
+
+    builder
+        .set_strict_cipher_list(&ciphers)
+        .map_err(|e| format!("[TLS] Failed to set cipher list: {e}"))?;
+
+    Ok(())
 }

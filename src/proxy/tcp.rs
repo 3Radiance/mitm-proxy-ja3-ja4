@@ -1,4 +1,5 @@
-use crate::config::AppConfig;
+use super::http::*;
+use crate::config::*;
 use crate::tls;
 use crate::Data;
 use std::error::Error;
@@ -20,8 +21,6 @@ pub const HTTP_200_OK: &[u8] = b"HTTP/1.1 200 Connection Established\r\n\r\n";
 pub const HTTP_403_FORBIDDEN: &[u8] =
     b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
-use super::http::{HttpPacket, HttpPacketRes, ParseResult};
-
 pub enum ConnectionStatus {
     Success(TcpStream),
     Failure(String),
@@ -29,17 +28,24 @@ pub enum ConnectionStatus {
 
 pub async fn connection(
     data: Arc<Data>,
-    config: Arc<AppConfig>,
+    config: AppConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let addr = format!("127.0.0.1:{}", data.port);
     let socket = TcpListener::bind(addr).await?;
+
+    let profile = config.profiles.values().next().ok_or("No profiles found")?;
+    let tls = Arc::new(profile.tls.clone());
+    let http2 = Arc::new(profile.http2.clone());
+
     println!("[TCP] Listening on {}", data.port);
     loop {
         let (client, addr) = socket.accept().await?;
         let data_clone = Arc::clone(&data);
+        let tls = Arc::clone(&tls);
+        let http2 = Arc::clone(&http2);
         println!("[TCP] New Connection: {}", addr);
         tokio::spawn(async move {
-            if let Err(e) = handle(client, data_clone).await {
+            if let Err(e) = handle(client, data_clone, tls, http2).await {
                 eprintln!("[TCP] Error: {e}");
             }
         });
@@ -49,6 +55,8 @@ pub async fn connection(
 async fn handle(
     mut client: TcpStream,
     data: Arc<Data>,
+    tls: Arc<TlsConfig>,
+    http2: Arc<Http2Config>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let ca_clone = Arc::clone(&data.ca);
@@ -96,7 +104,7 @@ async fn handle(
     let acceptor = tls::tls::create_ssl_acceptor(ca_clone, tx)?;
     let mut client = tls::tls::handle_tls(client, acceptor).await?;
     let sni = rx.recv().await.unwrap_or_else(|| "unknown".to_string());
-    let mut remote = tls::tls::create_ssl_acceptor_upstream(remote, &sni).await?;
+    let mut remote = tls::tls::create_ssl_acceptor_upstream(remote, &sni, tls).await?;
 
     tokio::io::copy_bidirectional(&mut client, &mut remote).await?;
 

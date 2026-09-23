@@ -160,3 +160,7 @@ pub fn set_cert_compression(
     }
     Ok(())
 }
+
+pub fn set_grease(builder: &mut SslContextBuilder, tls: &Arc<TlsConfig>) {
+    builder.set_grease_enabled(tls.grease_enabled);
+}

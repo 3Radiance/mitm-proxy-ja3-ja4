@@ -36,6 +36,7 @@ pub async fn create_ssl_acceptor_upstream(
     set_sigalgs_list(&mut builder, &tls)?;
     set_record_size_limit(&mut builder, &tls);
     set_cert_compression(&mut builder, &tls)?;
+    set_grease(&mut builder, &tls);
     set_extensions_order(&mut builder, &tls)?;
 
     let connector = builder.build();

@@ -6,13 +6,21 @@ An HTTP MITM proxy built with Rust, `tokio`, and `btls`.
 
 > **Currently in MVP (Minimum Viable Product) stage.**
 
-This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. At the moment, it functions as a transparent MITM proxy with upstream proxy support, but TLS fingerprint spoofing is currently partial.
+This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, and the exact extension order are all driven by a JSON profile. **Encrypted Client Hello (ECH) is intentionally not implemented yet** — it's on the roadmap. HTTP/2 (Akamai) and TCP (L4) fingerprinting are the next layers to be built.
 
 ## Features (Current Implementation)
 
 - **MITM (Man-in-the-Middle)** — Transparent HTTPS interception. It uses `rcgen` to dynamically issue and sign certificates on-the-fly, caching them via `dashmap` for performance.
 - **BoringSSL Integration** — Uses `btls` and `tokio-btls` for handling the TLS handshake and MITM interception.
-- **TLS Fingerprint Spoofing** — The upstream connection sets cipher suites, elliptic curves, and signature algorithms in strict, caller-defined order, loaded from a JSON config passed via `-c` / `--config <path>` (see `example.json` in the repository for the format). See the supported lists below: [ciphers](#supported-cipher-suites), [curves](#supported-curves), [signature algorithms](#supported-signature-algorithms), [extensions](#supported-extension-order-values).
+- **TLS Fingerprint Spoofing (JA3/JA4) — complete except ECH.** The upstream connection is built entirely from a JSON profile passed via `-c` / `--config <path>` (see `example.json` for the format):
+  - Cipher suites, in strict caller-defined order — see [ciphers](#supported-cipher-suites)
+  - Elliptic curves — see [curves](#supported-curves)
+  - Signature algorithms — see [signature algorithms](#supported-signature-algorithms)
+  - ALPN, with the protocol negotiated between the browser and the proxy carried over to the upstream connection, so both ends always agree
+  - Record size limit
+  - Certificate compression (brotli, zlib, zstd — with real decompression, not a stub) — see [supported algorithms](#supported-certificate-compression-algorithms)
+  - GREASE
+  - The exact position of every TLS extension in the ClientHello — see [extension order](#supported-extension-order-values)
 - **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method (configurable via CLI).
 - **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
 
@@ -20,8 +28,10 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 The current architecture is a foundation for highly advanced fingerprint spoofing:
 
-- **Dynamic Fingerprint Spoofing (JSON Profiles)**
-  Extend the existing `-c` / `--config` JSON profile to also cover TLS extension order, ALPN, HTTP/2 (Akamai), and TCP parameters — currently it drives cipher suites, curves, and signature algorithms.
+- **Encrypted Client Hello (ECH)**
+  Not implemented yet — deferred until the rest of the fingerprinting stack is in place.
+- **HTTP/2 Fingerprinting (Akamai)**
+  Extend the JSON profile to cover SETTINGS frame order, pseudo-header order, and stream priorities.
 - **L4 TCP Fingerprinting (NFQueue)**
   Implement a Layer 4 module using Linux `nfqueue` (Netfilter Queue) to spoof TCP fingerprints, including TTL, TCP window size, MSS, window scaling, and the exact order of TCP options.
 
@@ -42,7 +52,7 @@ cargo build --release
 
 ### 2. Run
 
-All settings — port, upstream proxy, and CA file paths — now live in the JSON config passed via `-c` / `--config <path>`. There are no more `--port` / `--upstream` CLI flags.
+All settings — port, upstream proxy, and CA file paths — live in the JSON config passed via `-c` / `--config <path>`. There are no `--port` / `--upstream` CLI flags.
 
 ```json
 {
@@ -69,10 +79,13 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 
 ## Architecture Highlights
 
-- `src/main.rs`: CLI entrypoint using `clap` for parsing `-c` / `--config <path>` (the only flag; port, upstream proxy, and CA paths now live inside the JSON config).
+- `src/main.rs`: CLI entrypoint using `clap` for parsing `-c` / `--config <path>` (the only flag; port, upstream proxy, and CA paths live inside the JSON config).
 - `src/proxy/tcp.rs`: TCP connection handling, initial HTTP `CONNECT` parsing, upstream connection establishment, and bridging the raw sockets to the TLS MITM layer.
-- `src/tls/cert.rs`: On-the-fly certificate generation using `rcgen` and `btls::x509`, signed by the local CA and cached in a `DashMap`.
-- `src/tls/tls.rs`: `btls` acceptor configuration and handshake handling (`tokio-btls`).
+- `src/proxy/http.rs`: Minimal HTTP/1.x request/response parsing (`httparse`-based), including `CONNECT` method validation.
+- `src/fingerprint/cert.rs`: On-the-fly certificate generation using `rcgen` and `btls::x509`, signed by the local CA and cached in a `DashMap`.
+- `src/fingerprint/tls.rs`: `btls` acceptor/connector configuration and handshake handling (`tokio-btls`).
+- `src/fingerprint/helpers.rs`: Individual TLS fingerprint setters (ciphers, curves, sigalgs, ALPN, extension order, record size limit, cert compression, GREASE).
+- `src/fingerprint/compression.rs`: Certificate compression implementations (brotli, zlib, zstd).
 
 ## Supported Cipher Suites
 
@@ -118,6 +131,7 @@ ECDHE-PSK-AES128-CBC-SHA
 ECDHE-PSK-AES256-CBC-SHA
 ECDHE-PSK-CHACHA20-POLY1305
 ```
+
 ## Supported Curves
 
 Full list (BoringSSL):
@@ -150,16 +164,29 @@ rsa_pss_rsae_sha512
 ed25519
 ```
 
+## Supported Certificate Compression Algorithms
+
+The `cert_compression` field accepts a list of algorithm names. Each one is
+backed by a real decompressor (not a stub), so the handshake completes
+correctly if the server actually sends a compressed certificate using one
+of them:
+```
+brotli
+zlib
+zstd
+```
+
 ## Supported Extension Order Values
 
 The `extensions_order` field controls the position of each TLS extension in
 the outgoing ClientHello (`SSL_CTX_set_extension_order` under the hood).
 Every extension that is actually active in the handshake — enabled through
-`cipher_suites`, `curves`, `signature_algorithms`, `alpn`, etc. — should be
-listed here. **If an active extension is left out of `extensions_order`, its
-resulting position is undefined** — it is not guaranteed to be dropped,
-appended, or placed anywhere specific, and behavior isn't documented upstream.
-Always include every extension you enable.
+`cipher_suites`, `curves`, `signature_algorithms`, `alpn`, `cert_compression`,
+`record_size_limit`, etc. — should be listed here. **If an active extension
+is left out of `extensions_order`, its resulting position is undefined** —
+it is not guaranteed to be dropped, appended, or placed anywhere specific,
+and behavior isn't documented upstream. Always include every extension you
+enable.
 
 Full list of supported names:
 ```

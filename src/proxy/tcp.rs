@@ -1,7 +1,7 @@
 use super::http::*;
 use crate::config::*;
 use crate::tls;
-use crate::Data;
+use crate::tls::cert::MitmCa;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::{
@@ -26,26 +26,34 @@ pub enum ConnectionStatus {
     Failure(String),
 }
 
-pub async fn connection(
-    data: Arc<Data>,
-    config: AppConfig,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let addr = format!("127.0.0.1:{}", data.port);
-    let socket = TcpListener::bind(addr).await?;
+pub async fn connection(config: AppConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let profile = config
+        .profiles
+        .values()
+        .next()
+        .ok_or("No Profile Configured")?;
 
-    let profile = config.profiles.values().next().ok_or("No profiles found")?;
     let tls = Arc::new(profile.tls.clone());
     let http2 = Arc::new(profile.http2.clone());
+    let upstream = Arc::new(profile.config.upstream_proxy.clone());
+    let ca = Arc::new(MitmCa::load_or_create(
+        &profile.config.cert,
+        &profile.config.key,
+    )?);
+    let addr = format!("127.0.0.1:{}", profile.config.port);
+    let socket = TcpListener::bind(addr).await?;
 
-    println!("[TCP] Listening on {}", data.port);
+    println!("[TCP] Listening on {}", profile.config.port);
     loop {
         let (client, addr) = socket.accept().await?;
-        let data_clone = Arc::clone(&data);
         let tls = Arc::clone(&tls);
         let http2 = Arc::clone(&http2);
+        let ca_clone = Arc::clone(&ca);
+        let upstream_clone = Arc::clone(&upstream);
+
         println!("[TCP] New Connection: {}", addr);
         tokio::spawn(async move {
-            if let Err(e) = handle(client, data_clone, tls, http2).await {
+            if let Err(e) = handle(client, ca_clone, tls, http2, upstream_clone).await {
                 eprintln!("[TCP] Error: {e}");
             }
         });
@@ -54,12 +62,12 @@ pub async fn connection(
 
 async fn handle(
     mut client: TcpStream,
-    data: Arc<Data>,
+    ca: Arc<MitmCa>,
     tls: Arc<TlsConfig>,
     http2: Arc<Http2Config>,
+    upstream: Arc<Option<String>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let ca_clone = Arc::clone(&data.ca);
     let mut buff: Vec<u8> = Vec::new();
     let mut buf = [0u8; 1024];
     let packet = loop {
@@ -89,7 +97,7 @@ async fn handle(
         }
     }
 
-    let remote = match upstream_connect(packet, data.upstream.clone()).await? {
+    let remote = match upstream_connect(packet, upstream).await? {
         ConnectionStatus::Success(stream) => stream,
         ConnectionStatus::Failure(reason) => {
             eprintln!("[TCP] Connection failure: {}", reason);
@@ -101,10 +109,14 @@ async fn handle(
     client.set_nodelay(true)?;
     remote.set_nodelay(true)?;
 
-    let acceptor = tls::tls::create_ssl_acceptor(ca_clone, tx)?;
-    let mut client = tls::tls::handle_tls(client, acceptor).await?;
+    let tls1 = Arc::clone(&tls);
+    let tls2 = Arc::clone(&tls);
+
+    let acceptor = tls::tls::create_ssl_acceptor(ca, tx, tls1)?;
+    let (mut client, selected_alpn) = tls::tls::handle_tls(client, acceptor).await?;
     let sni = rx.recv().await.unwrap_or_else(|| "unknown".to_string());
-    let mut remote = tls::tls::create_ssl_acceptor_upstream(remote, &sni, tls).await?;
+    let mut remote =
+        tls::tls::create_ssl_acceptor_upstream(remote, &sni, tls2, selected_alpn).await?;
 
     tokio::io::copy_bidirectional(&mut client, &mut remote).await?;
 

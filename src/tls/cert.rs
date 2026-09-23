@@ -12,9 +12,12 @@ pub struct MitmCa {
 }
 
 impl MitmCa {
-    pub fn load_or_create() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let cert_path = Path::new("ca.crt");
-        let key_path = Path::new("ca.key");
+    pub fn load_or_create(
+        cert: &str,
+        key: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let cert_path = Path::new(cert);
+        let key_path = Path::new(key);
 
         let (ca_cert, ca_keypair) = if cert_path.exists() && key_path.exists() {
             let key_pem = std::fs::read_to_string(key_path)?;

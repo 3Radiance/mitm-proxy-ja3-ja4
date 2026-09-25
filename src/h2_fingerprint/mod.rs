@@ -1,4 +1,3 @@
-pub mod connection;
 pub mod h2;
 pub mod request;
 pub mod request_body;

@@ -8,32 +8,64 @@ An HTTP MITM proxy built with Rust, `tokio`, and `btls`.
 
 This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, and the exact extension order are all driven by a JSON profile. **Encrypted Client Hello (ECH) is intentionally not implemented yet** — it's on the roadmap. HTTP/2 (Akamai) and TCP (L4) fingerprinting are the next layers to be built.
 
+### TLS Fingerprint Spoofing Configuration
+
+[TLS](TLS.md)
+
+### HTTP/2 Fingerprint Spoofing Configuration
+
+[HTTP/2](HTTP2.md)
+
 ## Features (Current Implementation)
 
-- **MITM (Man-in-the-Middle)** — Transparent HTTPS interception. It uses `rcgen` to dynamically issue and sign certificates on-the-fly, caching them via `dashmap` for performance.
-- **BoringSSL Integration** — Uses `btls` and `tokio-btls` for handling the TLS handshake and MITM interception.
-- **TLS Fingerprint Spoofing (JA3/JA4) — complete except ECH.** The upstream connection is built entirely from a JSON profile passed via `-c` / `--config <path>` (see `example.json` for the format):
-  - Cipher suites, in strict caller-defined order — see [ciphers](#supported-cipher-suites)
-  - Elliptic curves — see [curves](#supported-curves)
-  - Signature algorithms — see [signature algorithms](#supported-signature-algorithms)
-  - ALPN, with the protocol negotiated between the browser and the proxy carried over to the upstream connection, so both ends always agree
-  - Record size limit
-  - Certificate compression (brotli, zlib, zstd — with real decompression, not a stub) — see [supported algorithms](#supported-certificate-compression-algorithms)
-  - GREASE
-  - The exact position of every TLS extension in the ClientHello — see [extension order](#supported-extension-order-values)
-- **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method (configurable via CLI).
-- **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
+* **MITM (Man-in-the-Middle)** — Transparent HTTPS interception. It uses `rcgen` to dynamically issue and sign certificates on-the-fly, caching them via `dashmap` for performance.
 
-## Roadmap & Future Plans
+* **BoringSSL Integration** — Uses `btls` and `tokio-btls` for TLS handshake handling and MITM interception.
+
+* **TLS Fingerprint Spoofing (JA3/JA4) — complete except ECH.** The upstream TLS connection is built entirely from a JSON profile passed via `-c` / `--config <path>` (see `example.json` for the format):
+
+  * Cipher suites, in strict caller-defined order.
+  * Elliptic curves.
+  * Signature algorithms.
+  * ALPN negotiation based on the protocol actually selected by the upstream server.
+  * Record size limit.
+  * Certificate compression (`brotli`, `zlib`, `zstd`) with real decompression support.
+  * GREASE.
+  * Exact TLS extension ordering in the ClientHello.
+
+* **Upstream-First ALPN Negotiation** — The proxy establishes and negotiates TLS with the upstream server before completing the browser-side TLS handshake. The ALPN selected by the upstream server is then used to configure the client-side TLS acceptor, preventing the browser from selecting a protocol that the upstream connection does not support.
+
+* **HTTP/2 Fingerprint Spoofing (Akamai)** — Fully configurable HTTP/2 fingerprinting through the JSON profile:
+
+  * HTTP/2 SETTINGS values and exact SETTINGS ordering.
+  * Connection-level flow-control window updates.
+  * Configurable initial stream ID with automatic calculation when priority frames are configured.
+  * HTTP/2 priority frames and request header priority.
+  * Configurable `END_STREAM` placement for empty requests.
+  * Pseudo-header ordering.
+  * HTTP header ordering.
+  * HTTP header replacement, addition, and removal.
+  * Streaming request and response body forwarding without buffering the complete body.
+  * HTTP/2 trailers support.
+
+* **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method.
+
+* **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
+
+
+
+### Roadmap & Future Plans
 
 The current architecture is a foundation for highly advanced fingerprint spoofing:
 
-- **Encrypted Client Hello (ECH)**
+* **Encrypted Client Hello (ECH)**
+
   Not implemented yet — deferred until the rest of the fingerprinting stack is in place.
-- **HTTP/2 Fingerprinting (Akamai)**
-  Extend the JSON profile to cover SETTINGS frame order, pseudo-header order, and stream priorities.
-- **L4 TCP Fingerprinting (NFQueue)**
+
+* **L4 TCP Fingerprinting (NFQueue)**
+
   Implement a Layer 4 module using Linux `nfqueue` (Netfilter Queue) to spoof TCP fingerprints, including TTL, TCP window size, MSS, window scaling, and the exact order of TCP options.
+
 
 ## Requirements
 
@@ -79,148 +111,72 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 
 ## Architecture Highlights
 
-- `src/main.rs`: CLI entrypoint using `clap` for parsing `-c` / `--config <path>` (the only flag; port, upstream proxy, and CA paths live inside the JSON config).
-- `src/proxy/tcp.rs`: TCP connection handling, initial HTTP `CONNECT` parsing, upstream connection establishment, and bridging the raw sockets to the TLS MITM layer.
-- `src/proxy/http.rs`: Minimal HTTP/1.x request/response parsing (`httparse`-based), including `CONNECT` method validation.
-- `src/fingerprint/cert.rs`: On-the-fly certificate generation using `rcgen` and `btls::x509`, signed by the local CA and cached in a `DashMap`.
-- `src/fingerprint/tls.rs`: `btls` acceptor/connector configuration and handshake handling (`tokio-btls`).
-- `src/fingerprint/helpers.rs`: Individual TLS fingerprint setters (ciphers, curves, sigalgs, ALPN, extension order, record size limit, cert compression, GREASE).
-- `src/fingerprint/compression.rs`: Certificate compression implementations (brotli, zlib, zstd).
+* `src/main.rs`: CLI entrypoint using `clap` for parsing `-c` / `--config <path>`. The JSON configuration contains the proxy port, upstream proxy, CA paths, TLS fingerprint profiles, and HTTP/2 fingerprint profiles.
 
-## Supported Cipher Suites
+### Configuration
 
-BoringSSL keeps TLS 1.3 and TLS 1.2 cipher suites as two separate internal
-lists — they can never be interleaved in a config, and BoringSSL will always
-group them as two contiguous blocks (TLS 1.3 first, then TLS 1.2) regardless
-of the order they appear in `cipher_suites`. This matches how real browsers
-build their ClientHello, so it isn't a limitation you need to work around.
+* `src/config.rs`: JSON configuration model and parsers for all fingerprinting layers. Handles TLS settings, HTTP/2 SETTINGS, stream priorities, header ordering, HTTP header overrides, pseudo-header ordering, and other profile-specific options.
 
-Naming also differs between the two: TLS 1.3 suites use IANA-style
-`TLS_<AEAD>_<HASH>` names, while TLS 1.2 suites must be passed using
-OpenSSL-style short names (`ECDHE-ECDSA-AES128-GCM-SHA256`) — the
-`TLS_ECDHE_..._WITH_...` long form is **not** accepted for TLS 1.2 suites.
+### Proxy Layer
 
-### TLS 1.3
-```
-TLS_AES_128_GCM_SHA256
-TLS_AES_256_GCM_SHA384
-TLS_CHACHA20_POLY1305_SHA256
-```
+* `src/proxy/tcp.rs`: TCP connection handling, initial HTTP `CONNECT` parsing, upstream TCP connection establishment, SNI extraction, upstream TLS negotiation, and bridging the resulting TLS connection to the client.
 
-### TLS 1.2
-```
-ECDHE-ECDSA-AES128-GCM-SHA256
-ECDHE-ECDSA-AES256-GCM-SHA384
-ECDHE-RSA-AES128-GCM-SHA256
-ECDHE-RSA-AES256-GCM-SHA384
-ECDHE-ECDSA-CHACHA20-POLY1305
-ECDHE-RSA-CHACHA20-POLY1305
-ECDHE-ECDSA-AES128-SHA
-ECDHE-RSA-AES128-SHA
-ECDHE-RSA-AES128-SHA256
-ECDHE-ECDSA-AES256-SHA
-ECDHE-RSA-AES256-SHA
-TLS_RSA_WITH_AES_128_GCM_SHA256
-TLS_RSA_WITH_AES_256_GCM_SHA384
-TLS_RSA_WITH_AES_128_CBC_SHA
-TLS_RSA_WITH_AES_256_CBC_SHA
-TLS_RSA_WITH_3DES_EDE_CBC_SHA
-TLS_PSK_WITH_AES_128_CBC_SHA
-TLS_PSK_WITH_AES_256_CBC_SHA
-ECDHE-PSK-AES128-CBC-SHA
-ECDHE-PSK-AES256-CBC-SHA
-ECDHE-PSK-CHACHA20-POLY1305
-```
+* `src/proxy/http.rs`: Minimal HTTP/1.x request/response parsing using `httparse`, including `CONNECT` method validation and extraction of the target `host:port`.
 
-## Supported Curves
+### TLS Fingerprinting
 
-Full list (BoringSSL):
-```
-P-256
-P-384
-P-521
-X25519
-X25519Kyber768Draft00
-X25519MLKEM768
-MLKEM1024
-```
+* `src/tls_fingerprint/cert.rs`: On-the-fly certificate generation using `rcgen` and `btls::x509`, signed by the local CA and cached in a `DashMap`.
 
-## Supported Signature Algorithms
+* `src/tls_fingerprint/tls.rs`: `btls` / `tokio-btls` TLS acceptor and connector configuration, upstream TLS negotiation, client-side TLS handshake handling, and ALPN negotiation.
 
-Full list (BoringSSL):
-```
-rsa_pkcs1_md5_sha1
-rsa_pkcs1_sha1
-rsa_pkcs1_sha256
-rsa_pkcs1_sha256_legacy
-rsa_pkcs1_sha384
-rsa_pkcs1_sha512
-ecdsa_secp256r1_sha256
-ecdsa_secp384r1_sha384
-ecdsa_secp521r1_sha512
-rsa_pss_rsae_sha256
-rsa_pss_rsae_sha384
-rsa_pss_rsae_sha512
-ed25519
+* `src/tls_fingerprint/helpers.rs`: Individual TLS fingerprint configuration helpers for cipher suites, curves, signature algorithms, ALPN, extension order, record size limit, certificate compression, and GREASE.
+
+* `src/tls_fingerprint/compression.rs`: Certificate compression implementations for Brotli, zlib, and zstd.
+
+### HTTP/2 Fingerprinting
+
+* `src/h2_fingerprint/h2.rs`: HTTP/2 connection entrypoint and connection-level request handling. Coordinates the client-side HTTP/2 connection with the configured upstream HTTP/2 connection.
+
+* `src/h2_fingerprint/request.rs`: Incoming HTTP/2 request processing, request construction, pseudo-header ordering, HTTP header manipulation, upstream stream creation, and request/response forwarding coordination.
+
+* `src/h2_fingerprint/request_body.rs`: Streaming HTTP/2 request body forwarding, flow-control handling, `END_STREAM` placement, and request trailers.
+
+* `src/h2_fingerprint/response.rs`: HTTP/2 response forwarding, response body streaming, flow-control handling, `END_STREAM` handling, and response trailers.
+
+* `src/h2_fingerprint/upstream.rs`: Creation and configuration of the upstream HTTP/2 client connection according to the active fingerprint profile.
+
+### Module Structure
+
+The project is divided into independent layers:
+
+```text
+src/
+├── config.rs
+├── main.rs
+│
+├── proxy/
+│   ├── mod.rs
+│   ├── tcp.rs
+│   └── http.rs
+│
+├── tls_fingerprint/
+│   ├── mod.rs
+│   ├── cert.rs
+│   ├── compression.rs
+│   ├── helpers.rs
+│   └── tls.rs
+│
+└── h2_fingerprint/
+    ├── mod.rs
+    ├── h2.rs
+    ├── connection.rs
+    ├── request.rs
+    ├── request_body.rs
+    ├── response.rs
+    └── upstream.rs
 ```
 
-## Supported Certificate Compression Algorithms
-
-The `cert_compression` field accepts a list of algorithm names. Each one is
-backed by a real decompressor (not a stub), so the handshake completes
-correctly if the server actually sends a compressed certificate using one
-of them:
-```
-brotli
-zlib
-zstd
-```
-
-## Supported Extension Order Values
-
-The `extensions_order` field controls the position of each TLS extension in
-the outgoing ClientHello (`SSL_CTX_set_extension_order` under the hood).
-Every extension that is actually active in the handshake — enabled through
-`cipher_suites`, `curves`, `signature_algorithms`, `alpn`, `cert_compression`,
-`record_size_limit`, etc. — should be listed here. **If an active extension
-is left out of `extensions_order`, its resulting position is undefined** —
-it is not guaranteed to be dropped, appended, or placed anywhere specific,
-and behavior isn't documented upstream. Always include every extension you
-enable.
-
-Full list of supported names:
-```
-server_name
-status_request
-ec_point_formats
-signature_algorithms
-srtp
-alpn
-padding
-extended_master_secret
-quic_transport_parameters_legacy
-quic_transport_parameters_standard
-cert_compression
-session_ticket
-supported_groups
-pre_shared_key
-early_data
-supported_versions
-cookie
-psk_key_exchange_modes
-certificate_authorities
-signature_algorithms_cert
-key_share
-renegotiation_info
-delegated_credentials
-application_settings
-application_settings_old
-encrypted_client_hello
-certificate_timestamp
-next_proto_neg
-channel_id
-record_size_limit
-```
+The `proxy` layer handles raw TCP and HTTP `CONNECT` traffic, the `tls_fingerprint` layer handles TLS interception and TLS fingerprinting, and the `h2_fingerprint` layer handles HTTP/2 fingerprinting and stream-level traffic. This separation keeps transport, TLS, and HTTP/2 fingerprinting logic independent while allowing the layers to work together during a single proxied connection.
 
 ## License
 

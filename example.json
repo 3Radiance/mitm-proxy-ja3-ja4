@@ -66,55 +66,33 @@
             ],
             "grease_enabled": false,
             "enable_ech": true,
-            "record_size_limit": 16384
+            "record_size_limit": 4001
         },
         "http2": {
             "settings": {
                 "header_table_size": 65536,
                 "enable_push": false,
-                "max_concurrent_streams": 100,
+                "max_concurrent_streams": null,
                 "initial_window_size": 131072,
-                "max_frame_size": 16384
+                "max_frame_size": 16384,
+                "max_header_list_size": null
             },
             "settings_order": [
                 "HEADER_TABLE_SIZE",
+                "ENABLE_PUSH",
                 "INITIAL_WINDOW_SIZE",
                 "MAX_FRAME_SIZE",
-                "MAX_CONCURRENT_STREAMS"
+                "MAX_HEADER_LIST_SIZE"
             ],
-            "connection_window_update": 12517377,
-            "priority_frames": [
-                {
-                    "stream_id": 3,
-                    "exclusive": false,
-                    "depends_on": 0,
-                    "weight": 201
-                },
-                {
-                    "stream_id": 5,
-                    "exclusive": false,
-                    "depends_on": 0,
-                    "weight": 101
-                },
-                {
-                    "stream_id": 7,
-                    "exclusive": false,
-                    "depends_on": 0,
-                    "weight": 1
-                },
-                {
-                    "stream_id": 9,
-                    "exclusive": false,
-                    "depends_on": 0,
-                    "weight": 1
-                },
-                {
-                    "stream_id": 11,
-                    "exclusive": false,
-                    "depends_on": 7,
-                    "weight": 1
-                }
-            ],
+            "connection_window_update": 12582912,
+            "initial_stream_id": null,
+            "priority_frames": null,
+            "headers_priority": {
+                "exclusive": false,
+                "depends_on": 0,
+                "weight": 41
+            },
+            "end_stream_on_headers": false,
             "pseudo_headers_order": [
                 ":method",
                 ":path",
@@ -123,29 +101,11 @@
             ],
             "headers_order": [
                 "user-agent",
-                "accept",
-                "accept-language",
-                "accept-encoding",
-                "referer",
-                "upgrade-insecure-requests",
-                "sec-fetch-dest",
-                "sec-fetch-mode",
-                "sec-fetch-site",
-                "priority",
-                "te"
+                "accept-language"
             ],
             "http_headers": {
-                "user-agent": "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0",
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "accept-language": "en-US,en;q=0.5",
-                "accept-encoding": "gzip, deflate, br, zstd",
-                "upgrade-insecure-requests": "1",
-                "sec-fetch-dest": "document",
-                "sec-fetch-mode": "navigate",
-                "sec-fetch-site": "none",
-                "sec-fetch-user": "?1",
-                "priority": "u=0, i",
-                "te": "trailers"
+                "user-agent": "Mozilla/5.0 (X11; Linux x86_64; rv:154.0) Gecko/20100101 Firefox/154.0",
+                "accept-language": "en-US,en;q=0.6"
             }
         }
     }

@@ -1,7 +1,10 @@
 use super::http::*;
-use crate::config::*;
-use crate::fingerprint;
-use crate::fingerprint::cert::MitmCa;
+use crate::h2_fingerprint;
+use crate::h2_fingerprint::h2::ConnectionData;
+
+use crate::tls_fingerprint;
+use crate::{Data, ProxyConfig};
+
 use std::error::Error;
 use std::sync::Arc;
 use tokio::{
@@ -26,48 +29,26 @@ pub enum ConnectionStatus {
     Failure(String),
 }
 
-pub async fn connection(config: AppConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let profile = config
-        .profiles
-        .values()
-        .next()
-        .ok_or("No Profile Configured")?;
-
-    let tls = Arc::new(profile.tls.clone());
-    let http2 = Arc::new(profile.http2.clone());
-    let upstream = Arc::new(profile.config.upstream_proxy.clone());
-    let ca = Arc::new(MitmCa::load_or_create(
-        &profile.config.cert,
-        &profile.config.key,
-    )?);
-    let addr = format!("127.0.0.1:{}", profile.config.port);
+pub async fn connection(config: ProxyConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let addr = format!("127.0.0.1:{}", config.port);
     let socket = TcpListener::bind(addr).await?;
 
-    println!("[TCP] Listening on {}", profile.config.port);
+    println!("[TCP] Listening on {}", config.port);
     loop {
         let (client, addr) = socket.accept().await?;
 
-        let tls_clone = Arc::clone(&tls);
-        let http2_clone = Arc::clone(&http2);
-        let ca_clone = Arc::clone(&ca);
-        let upstream_clone = Arc::clone(&upstream);
+        let data = config.ctx.clone();
 
         println!("[TCP] New Connection: {}", addr);
         tokio::spawn(async move {
-            if let Err(e) = handle(client, ca_clone, tls_clone, http2_clone, upstream_clone).await {
+            if let Err(e) = handle(client, data).await {
                 eprintln!("[TCP] Error: {e}");
             }
         });
     }
 }
 
-async fn handle(
-    mut client: TcpStream,
-    ca: Arc<MitmCa>,
-    tls: Arc<TlsConfig>,
-    http2: Arc<Http2Config>,
-    upstream: Arc<Option<String>>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn handle(mut client: TcpStream, handle: Data) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut buff: Vec<u8> = Vec::new();
     let mut buf = [0u8; 1024];
@@ -98,7 +79,7 @@ async fn handle(
         }
     }
 
-    let remote = match upstream_connect(packet, upstream).await? {
+    let remote = match upstream_connect(&packet, handle.upstream.clone()).await? {
         ConnectionStatus::Success(stream) => stream,
         ConnectionStatus::Failure(reason) => {
             eprintln!("[TCP] Connection failure: {}", reason);
@@ -106,26 +87,45 @@ async fn handle(
             return Ok(());
         }
     };
-    client.write_all(HTTP_200_OK).await?;
+
     client.set_nodelay(true)?;
     remote.set_nodelay(true)?;
 
-    let tls1 = Arc::clone(&tls);
-    let tls2 = Arc::clone(&tls);
+    let sni = get_sni_from_packet(&packet)?;
 
-    let acceptor = fingerprint::tls::create_ssl_acceptor(ca, tx, tls1)?;
-    let (mut client, selected_alpn) = fingerprint::tls::handle_tls(client, acceptor).await?;
-    let sni = rx.recv().await.unwrap_or_else(|| "unknown".to_string());
-    let mut remote =
-        fingerprint::tls::create_ssl_acceptor_upstream(remote, &sni, tls2, selected_alpn).await?;
+    let (mut remote, selected_alpn) =
+        tls_fingerprint::tls::create_ssl_acceptor_upstream(remote, &sni, handle.tls.clone())
+            .await?;
 
-    tokio::io::copy_bidirectional(&mut client, &mut remote).await?;
+    client.write_all(HTTP_200_OK).await?;
+
+    let acceptor = tls_fingerprint::tls::create_ssl_acceptor(handle.ca, tx, &selected_alpn)?;
+
+    let mut client = tls_fingerprint::tls::handle_tls(client, acceptor).await?;
+
+    let proxydata = ConnectionData {
+        tls: handle.tls,
+        http2: handle.http2,
+        upstream: handle.upstream,
+        sni: Arc::new(sni),
+        selected_alpn: Arc::new(selected_alpn),
+        packet: Arc::new(packet),
+    };
+
+    match proxydata.selected_alpn.as_deref() {
+        Some([_, b'h', b'2']) => {
+            h2_fingerprint::h2::handle_h2(client, remote, proxydata).await?;
+        }
+        _ => {
+            tokio::io::copy_bidirectional(&mut client, &mut remote).await?;
+        }
+    }
 
     Ok(())
 }
 
-async fn upstream_connect(
-    packet: HttpPacket,
+pub async fn upstream_connect(
+    packet: &HttpPacket,
     upstream: Arc<Option<String>>,
 ) -> Result<ConnectionStatus, Box<dyn Error + Send + Sync>> {
     let host = match packet.get_header("host") {
@@ -146,7 +146,16 @@ async fn upstream_connect(
     }
 }
 
-async fn upstream_connect_helper(
+fn get_sni_from_packet(packet: &HttpPacket) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let host = match packet.get_header("host") {
+        Some(h) => h,
+        None => return Err("Host header not found".to_string().into()),
+    };
+    let sni = host.split(":").next().unwrap_or(host);
+    Ok(sni.to_string())
+}
+
+pub async fn upstream_connect_helper(
     host: &str,
     upstream: &str,
 ) -> Result<ConnectionStatus, Box<dyn Error + Send + Sync>> {

@@ -23,6 +23,7 @@ impl MitmCa {
         let key_path = Path::new(key);
 
         let (ca_cert, ca_keypair) = if cert_path.exists() && key_path.exists() {
+            let cert_pem = std::fs::read_to_string(cert_path)?;
             let key_pem = std::fs::read_to_string(key_path)?;
             let keypair = KeyPair::from_pem(&key_pem)?;
 

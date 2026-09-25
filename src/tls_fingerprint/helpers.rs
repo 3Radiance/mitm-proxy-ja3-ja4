@@ -1,6 +1,6 @@
 use crate::config::*;
-use crate::fingerprint::cert::MitmCa;
-use crate::fingerprint::compression::{BrotliCompressor, ZlibCompressor, ZstdCompressor};
+use crate::tls_fingerprint::cert::MitmCa;
+use crate::tls_fingerprint::compression::{BrotliCompressor, ZlibCompressor, ZstdCompressor};
 
 use btls::ssl::{AlpnError, ClientHello, NameType, SelectCertError, SslContextBuilder};
 
@@ -69,7 +69,7 @@ pub fn set_alpn_select_callback(builder: &mut SslContextBuilder, alpn_bytes: Vec
 
 pub fn set_cipher_suites(
     builder: &mut SslContextBuilder,
-    tls: &Arc<TlsConfig>,
+    tls: Arc<TlsConfig>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     builder.set_preserve_tls13_cipher_list(true);
 
@@ -84,19 +84,17 @@ pub fn set_cipher_suites(
 
 pub fn set_alpn_protos(
     builder: &mut SslContextBuilder,
-    alpn_bytes: Option<Vec<u8>>,
+    alpn_bytes: Vec<u8>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if let Some(alpn) = alpn_bytes {
-        builder
-            .set_alpn_protos(&alpn)
-            .map_err(|e| format!("[TLS] Failed to set ALPN: {e}"))?;
-    }
+    builder
+        .set_alpn_protos(&alpn_bytes)
+        .map_err(|e| format!("[TLS] Failed to set ALPN: {e}"))?;
     Ok(())
 }
 
 pub fn set_curves_list(
     builder: &mut SslContextBuilder,
-    tls: &Arc<TlsConfig>,
+    tls: Arc<TlsConfig>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let curve_list = tls.curves.join(":");
     builder
@@ -107,7 +105,7 @@ pub fn set_curves_list(
 
 pub fn set_sigalgs_list(
     builder: &mut SslContextBuilder,
-    tls: &Arc<TlsConfig>,
+    tls: Arc<TlsConfig>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sigalgs = tls.signature_algorithms.join(":");
     builder
@@ -118,13 +116,9 @@ pub fn set_sigalgs_list(
 
 pub fn set_extensions_order(
     builder: &mut SslContextBuilder,
-    tls: &Arc<TlsConfig>,
+    tls: Arc<TlsConfig>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ext = tls
-        .extensions_order
-        .iter()
-        .map(|e| TlsConfig::parse_extension(e))
-        .collect::<Result<Vec<_>, String>>()?;
+    let ext = tls.parse_extension()?;
     builder
         .set_extension_permutation(&ext)
         .map_err(|e| format!("[TLS] Failed to set extension order: {e}"))?;
@@ -132,7 +126,7 @@ pub fn set_extensions_order(
     Ok(())
 }
 
-pub fn set_record_size_limit(builder: &mut SslContextBuilder, tls: &Arc<TlsConfig>) {
+pub fn set_record_size_limit(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) {
     if let Some(limit) = tls.record_size_limit {
         builder.set_record_size_limit(limit);
     }
@@ -140,7 +134,7 @@ pub fn set_record_size_limit(builder: &mut SslContextBuilder, tls: &Arc<TlsConfi
 
 pub fn set_cert_compression(
     builder: &mut SslContextBuilder,
-    tls: &Arc<TlsConfig>,
+    tls: Arc<TlsConfig>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for algo in &tls.cert_compression {
         match algo.as_str() {
@@ -161,6 +155,6 @@ pub fn set_cert_compression(
     Ok(())
 }
 
-pub fn set_grease(builder: &mut SslContextBuilder, tls: &Arc<TlsConfig>) {
+pub fn set_grease(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) {
     builder.set_grease_enabled(tls.grease_enabled);
 }

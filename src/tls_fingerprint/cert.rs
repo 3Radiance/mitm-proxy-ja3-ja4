@@ -1,3 +1,4 @@
+use anyhow::Result;
 use moka::sync::Cache;
 use rcgen::{BasicConstraints, Certificate, CertificateParams, DnType, IsCa, KeyPair, SanType};
 use std::fs::OpenOptions;
@@ -17,15 +18,12 @@ pub struct MitmCa {
 }
 
 impl MitmCa {
-    pub fn load_or_create(
-        cert: &str,
-        key: &str,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn load_or_create(cert: &str, key: &str) -> Result<Self> {
         let cert_path = Path::new(cert);
         let key_path = Path::new(key);
 
         let (ca_cert, ca_keypair) = if cert_path.exists() && key_path.exists() {
-            let cert_pem = std::fs::read_to_string(cert_path)?;
+            let _cert_pem = std::fs::read_to_string(cert_path)?;
             let key_pem = std::fs::read_to_string(key_path)?;
             let keypair = KeyPair::from_pem(&key_pem)?;
 
@@ -56,10 +54,7 @@ impl MitmCa {
         })
     }
 
-    fn write_key_secure(
-        path: &Path,
-        pem: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    fn write_key_secure(path: &Path, pem: &str) -> Result<()> {
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -70,9 +65,7 @@ impl MitmCa {
         Ok(())
     }
 
-    fn build_ca_certificate(
-        keypair: &KeyPair,
-    ) -> Result<Certificate, Box<dyn std::error::Error + Send + Sync>> {
+    fn build_ca_certificate(keypair: &KeyPair) -> Result<Certificate> {
         let mut params = CertificateParams::default();
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params
@@ -85,10 +78,7 @@ impl MitmCa {
         Ok(params.self_signed(keypair)?)
     }
 
-    pub fn get_or_issue_cert(
-        &self,
-        domain: &str,
-    ) -> Result<Arc<BoringCertPair>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_or_issue_cert(&self, domain: &str) -> Result<Arc<BoringCertPair>> {
         let cert_pair = self
             .cache
             .try_get_with(domain.to_string(), || {
@@ -98,19 +88,14 @@ impl MitmCa {
                 let x509 = btls::x509::X509::from_pem(cert_pem.as_bytes())?;
                 let pkey = btls::pkey::PKey::private_key_from_pem(key_pem.as_bytes())?;
 
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Arc::new((x509, pkey)))
+                Ok::<_, anyhow::Error>(Arc::new((x509, pkey)))
             })
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                format!("[CA] Failed to get or issue cert: {e}").into()
-            })?;
+            .map_err(|e| anyhow::anyhow!("[CA] Failed to get or issue cert: {e}"))?;
 
         Ok(cert_pair)
     }
 
-    fn issue_cert_for_domain(
-        &self,
-        domain: &str,
-    ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+    fn issue_cert_for_domain(&self, domain: &str) -> Result<(String, String)> {
         let cert_keypair = KeyPair::generate()?;
         let mut params = CertificateParams::new(vec![domain.to_string()])?;
 

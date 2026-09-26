@@ -1,16 +1,14 @@
+use anyhow::Result;
 use crate::config::*;
 use crate::h2_fingerprint::h2::ConnectionData;
 use crate::proxy;
 use crate::tls_fingerprint;
 use http2::frame::{Priorities, PseudoOrder, SettingsOrder};
-use std::error::Error;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_btls::SslStream;
 
-pub async fn build_upstream_h2_builder(
-    config: Arc<Http2Config>,
-) -> Result<http2::client::Builder, Box<dyn Error + Send + Sync>> {
+pub async fn build_upstream_h2_builder(config: Arc<Http2Config>) -> Result<http2::client::Builder> {
     let mut builder = http2::client::Builder::new();
 
     let mut pseudo_builder = PseudoOrder::builder();
@@ -63,7 +61,7 @@ pub async fn build_upstream_h2_builder(
 pub fn set_settings_frame(
     builder: &mut http2::client::Builder,
     config: Arc<Http2Config>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<()> {
     if let Some(v) = config.settings.header_table_size {
         builder.header_table_size(v as u32);
     }
@@ -89,20 +87,19 @@ pub fn set_settings_frame(
     Ok(())
 }
 
-pub async fn upstream_reconnect(
-    proxydata: ConnectionData,
-) -> Result<SslStream<TcpStream>, Box<dyn Error + Send + Sync>> {
-    let remote = match proxy::tcp::upstream_connect(&proxydata.packet, proxydata.upstream).await? {
-        proxy::tcp::ConnectionStatus::Success(stream) => stream,
-        proxy::tcp::ConnectionStatus::Failure(reason) => {
-            eprintln!("[TCP] Connection failure: {}", reason);
-            return Err(reason.into());
-        }
-    };
+pub async fn upstream_reconnect(proxydata: ConnectionData) -> Result<SslStream<TcpStream>> {
+    let remote =
+        match proxy::tcp::upstream_connect(proxydata.packet.clone(), proxydata.upstream).await? {
+            proxy::tcp::ConnectionStatus::Success(stream) => stream,
+            proxy::tcp::ConnectionStatus::Failure(reason) => {
+                eprintln!("[TCP] Connection failure: {}", reason);
+                return Err(anyhow::anyhow!(reason));
+            }
+        };
 
     remote.set_nodelay(true)?;
 
-    let (remote, alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
+    let (remote, _alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
         remote,
         &proxydata.sni,
         proxydata.tls,

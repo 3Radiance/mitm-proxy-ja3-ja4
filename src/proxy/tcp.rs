@@ -1,16 +1,17 @@
 use super::http::*;
-use crate::h2_fingerprint;
 use crate::h2_fingerprint::h2::ConnectionData;
+use crate::{h1_fingerptint, h2_fingerprint};
 
 use crate::tls_fingerprint;
 use crate::{Data, ProxyConfig};
 
-use std::error::Error;
 use std::sync::Arc;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+
+use anyhow::Result;
 
 pub const HTTP_502_BAD_GATEWAY: &[u8] = b"HTTP/1.1 502 Bad Gateway\r\n\
 Content-Type: text/plain\r\n\
@@ -29,7 +30,7 @@ pub enum ConnectionStatus {
     Failure(String),
 }
 
-pub async fn connection(config: ProxyConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn connection(config: ProxyConfig) -> Result<()> {
     let addr = format!("127.0.0.1:{}", config.port);
     let socket = TcpListener::bind(addr).await?;
 
@@ -48,20 +49,20 @@ pub async fn connection(config: ProxyConfig) -> Result<(), Box<dyn Error + Send 
     }
 }
 
-async fn handle(mut client: TcpStream, handle: Data) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
     let mut buff: Vec<u8> = Vec::new();
     let mut buf = [0u8; 1024];
     let packet = loop {
         let n = client.read(&mut buf).await?;
 
         if n == 0 {
-            return Err("[TCP] Connection closed".into());
+            return Err(anyhow::anyhow!("[TCP] Connection closed"));
         }
 
         buff.extend_from_slice(&buf[..n]);
 
         if buff.len() > 8192 {
-            return Err("[TCP] HTTP Header too large".into());
+            return Err(anyhow::anyhow!("[TCP] HTTP Header too large"));
         }
 
         match HttpPacket::parse(&buff)? {
@@ -69,8 +70,9 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<(), Box<dyn Error
             ParseResult::Partial => continue,
         }
     };
+    let packet = Arc::new(packet);
 
-    match HttpPacket::check_method(&packet, client).await? {
+    match HttpPacket::check_method(packet.clone(), client).await? {
         ConnectionStatus::Success(stream) => client = stream,
         ConnectionStatus::Failure(reason) => {
             eprintln!("[HTTP] {}", reason);
@@ -78,7 +80,7 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<(), Box<dyn Error
         }
     }
 
-    let remote = match upstream_connect(&packet, handle.upstream.clone()).await? {
+    let remote = match upstream_connect(packet.clone(), handle.upstream.clone()).await? {
         ConnectionStatus::Success(stream) => stream,
         ConnectionStatus::Failure(reason) => {
             eprintln!("[TCP] Connection failure: {}", reason);
@@ -90,9 +92,9 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<(), Box<dyn Error
     client.set_nodelay(true)?;
     remote.set_nodelay(true)?;
 
-    let sni = get_sni_from_packet(&packet)?;
+    let sni = get_sni_from_packet(packet.clone())?;
 
-    let (mut remote, selected_alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
+    let (remote, selected_alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
         remote,
         &sni,
         handle.tls.clone(),
@@ -104,33 +106,32 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<(), Box<dyn Error
 
     let acceptor = tls_fingerprint::tls::create_ssl_acceptor(handle.ca, &selected_alpn)?;
 
-    let mut client = tls_fingerprint::tls::handle_tls(client, acceptor).await?;
+    let client = tls_fingerprint::tls::handle_tls(client, acceptor).await?;
 
     let proxydata = ConnectionData {
         tls: handle.tls,
         http2: handle.http2,
+        http1: handle.http1,
         upstream: handle.upstream,
         sni: Arc::new(sni),
         selected_alpn: Arc::new(selected_alpn),
-        packet: Arc::new(packet),
+        packet,
     };
 
     match proxydata.selected_alpn.as_deref() {
         Some([_, b'h', b'2']) => {
             h2_fingerprint::h2::handle_h2(client, remote, proxydata).await?;
         }
-        _ => {
-            tokio::io::copy_bidirectional(&mut client, &mut remote).await?;
-        }
+        _ => h1_fingerptint::h1::handle_h1(client, remote, proxydata).await?,
     }
 
     Ok(())
 }
 
 pub async fn upstream_connect(
-    packet: &HttpPacket,
+    packet: Arc<HttpPacket>,
     upstream: Arc<Option<String>>,
-) -> Result<ConnectionStatus, Box<dyn Error + Send + Sync>> {
+) -> Result<ConnectionStatus> {
     let host = match packet.get_header("host") {
         Some(h) => h,
         None => {
@@ -149,19 +150,16 @@ pub async fn upstream_connect(
     }
 }
 
-fn get_sni_from_packet(packet: &HttpPacket) -> Result<String, Box<dyn Error + Send + Sync>> {
+fn get_sni_from_packet(packet: Arc<HttpPacket>) -> Result<String> {
     let host = match packet.get_header("host") {
         Some(h) => h,
-        None => return Err("Host header not found".to_string().into()),
+        None => return Err(anyhow::anyhow!("Host header not found")),
     };
     let sni = host.split(":").next().unwrap_or(host);
     Ok(sni.to_string())
 }
 
-pub async fn upstream_connect_helper(
-    host: &str,
-    upstream: &str,
-) -> Result<ConnectionStatus, Box<dyn Error + Send + Sync>> {
+pub async fn upstream_connect_helper(host: &str, upstream: &str) -> Result<ConnectionStatus> {
     let mut stream = match TcpStream::connect(upstream).await {
         Ok(s) => s,
         Err(e) => return Ok(ConnectionStatus::Failure(e.to_string())),

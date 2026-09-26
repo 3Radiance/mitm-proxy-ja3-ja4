@@ -1,3 +1,4 @@
+use anyhow::Result;
 use crate::h2_fingerprint::h2::ConnectionData;
 use crate::h2_fingerprint::request_body::*;
 use crate::h2_fingerprint::response::*;
@@ -7,7 +8,6 @@ use bytes::Bytes;
 use http::Request;
 use http2::server::SendResponse;
 use http2::RecvStream;
-use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -16,7 +16,7 @@ pub async fn handle_request(
     mut respond: SendResponse<Bytes>,
     upstream_send: Arc<Mutex<http2::client::SendRequest<Bytes>>>,
     proxydata: ConnectionData,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<()> {
     let method = request.method().clone();
     let uri = request.uri().clone();
 

@@ -1,3 +1,4 @@
+use anyhow::Result;
 use crate::config::*;
 use crate::tls_fingerprint::cert::MitmCa;
 use crate::tls_fingerprint::compression::{BrotliCompressor, ZlibCompressor, ZstdCompressor};
@@ -61,61 +62,46 @@ pub fn set_alpn_select_callback(builder: &mut SslContextBuilder, alpn_bytes: Vec
     });
 }
 
-pub fn set_cipher_suites(
-    builder: &mut SslContextBuilder,
-    tls: Arc<TlsConfig>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn set_cipher_suites(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
     builder.set_preserve_tls13_cipher_list(true);
 
     let ciphers = tls.cipher_suites.join(":");
 
     builder
         .set_cipher_list(&ciphers)
-        .map_err(|e| format!("[TLS] Failed to set cipher list: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("[TLS] Failed to set cipher list: {e}"))?;
 
     Ok(())
 }
 
-pub fn set_alpn_protos(
-    builder: &mut SslContextBuilder,
-    alpn_bytes: Vec<u8>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn set_alpn_protos(builder: &mut SslContextBuilder, alpn_bytes: Vec<u8>) -> Result<()> {
     builder
         .set_alpn_protos(&alpn_bytes)
-        .map_err(|e| format!("[TLS] Failed to set ALPN: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("[TLS] Failed to set ALPN: {e}"))?;
     Ok(())
 }
 
-pub fn set_curves_list(
-    builder: &mut SslContextBuilder,
-    tls: Arc<TlsConfig>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn set_curves_list(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
     let curve_list = tls.curves.join(":");
     builder
         .set_curves_list(&curve_list)
-        .map_err(|e| format!("[TLS] Failed to set curves: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("[TLS] Failed to set curves: {e}"))?;
     Ok(())
 }
 
-pub fn set_sigalgs_list(
-    builder: &mut SslContextBuilder,
-    tls: Arc<TlsConfig>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn set_sigalgs_list(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
     let sigalgs = tls.signature_algorithms.join(":");
     builder
         .set_sigalgs_list(&sigalgs)
-        .map_err(|e| format!("[TLS] Failed to set signature algorithms: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("[TLS] Failed to set signature algorithms: {e}"))?;
     Ok(())
 }
 
-pub fn set_extensions_order(
-    builder: &mut SslContextBuilder,
-    tls: Arc<TlsConfig>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn set_extensions_order(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
     if let Some(ext) = tls.parse_extension()? {
         builder
             .set_extension_permutation(&ext)
-            .map_err(|e| format!("[TLS] Failed to set extension order: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("[TLS] Failed to set extension order: {e}"))?;
     }
 
     Ok(())
@@ -127,23 +113,20 @@ pub fn set_record_size_limit(builder: &mut SslContextBuilder, tls: Arc<TlsConfig
     }
 }
 
-pub fn set_cert_compression(
-    builder: &mut SslContextBuilder,
-    tls: Arc<TlsConfig>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn set_cert_compression(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
     for algo in &tls.cert_compression {
         match algo.as_str() {
             "brotli" => builder
                 .add_certificate_compression_algorithm(BrotliCompressor)
-                .map_err(|e| format!("[TLS] Failed to add brotli compression: {e}"))?,
+                .map_err(|e| anyhow::anyhow!("[TLS] Failed to add brotli compression: {e}"))?,
             "zlib" => builder
                 .add_certificate_compression_algorithm(ZlibCompressor)
-                .map_err(|e| format!("[TLS] Failed to add zlib compression: {e}"))?,
+                .map_err(|e| anyhow::anyhow!("[TLS] Failed to add zlib compression: {e}"))?,
             "zstd" => builder
                 .add_certificate_compression_algorithm(ZstdCompressor)
-                .map_err(|e| format!("[TLS] Failed to add zstd compression: {e}"))?,
+                .map_err(|e| anyhow::anyhow!("[TLS] Failed to add zstd compression: {e}"))?,
             other => {
-                return Err(format!("[TLS] Unknown cert compression algorithm: {other}").into())
+                return Err(anyhow::anyhow!("[TLS] Unknown cert compression algorithm: {other}"));
             }
         }
     }

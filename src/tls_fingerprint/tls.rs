@@ -1,3 +1,4 @@
+use anyhow::Result;
 use crate::config::*;
 use crate::tls_fingerprint::cert::MitmCa;
 use crate::tls_fingerprint::helpers::*;
@@ -14,7 +15,7 @@ use foreign_types_shared::ForeignType;
 pub fn create_ssl_acceptor(
     ca: Arc<MitmCa>,
     alpn: &Option<Vec<u8>>,
-) -> Result<SslAcceptor, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<SslAcceptor> {
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
 
     if let Some(alpn) = alpn {
@@ -31,7 +32,7 @@ pub async fn create_ssl_acceptor_upstream(
     target_host: &str,
     tls: Arc<TlsConfig>,
     http2: Arc<Http2Config>,
-) -> Result<(SslStream<TcpStream>, Option<Vec<u8>>), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(SslStream<TcpStream>, Option<Vec<u8>>)> {
     let mut builder = SslConnector::builder(SslMethod::tls())?;
     builder.set_default_verify_paths()?;
 
@@ -90,7 +91,7 @@ pub async fn create_ssl_acceptor_upstream(
 pub async fn handle_tls(
     client: TcpStream,
     acceptor: SslAcceptor,
-) -> Result<SslStream<TcpStream>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<SslStream<TcpStream>> {
     let ssl = Ssl::new(acceptor.context())?;
     let mut tls_stream = SslStream::new(ssl, client)?;
 

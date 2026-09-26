@@ -1,8 +1,8 @@
+use anyhow::Result;
 use crate::config::*;
 use crate::h2_fingerprint::upstream::*;
 use crate::proxy::http::HttpPacket;
 
-use std::error::Error;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -16,6 +16,7 @@ use super::request::*;
 pub struct ConnectionData {
     pub tls: Arc<TlsConfig>,
     pub http2: Arc<Http2Config>,
+    pub http1: Arc<Http1Config>,
     pub upstream: Arc<Option<String>>,
     pub sni: Arc<String>,
     pub selected_alpn: Arc<Option<Vec<u8>>>,
@@ -26,7 +27,7 @@ pub async fn handle_h2(
     client: SslStream<TcpStream>,
     remote: SslStream<TcpStream>,
     proxydata: ConnectionData,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<()> {
     let mut server_conn = http2::server::handshake(client).await?;
 
     let upstream_builder = build_upstream_h2_builder(proxydata.http2.clone()).await?;

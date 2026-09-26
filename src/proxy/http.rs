@@ -1,5 +1,6 @@
+use anyhow::Result;
 use crate::proxy::tcp::{ConnectionStatus, HTTP_403_FORBIDDEN};
-use std::error::Error;
+use std::sync::Arc;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 #[derive(Debug)]
@@ -35,7 +36,7 @@ impl HttpPacket {
         None
     }
 
-    pub fn parse(buf: &[u8]) -> Result<ParseResult<HttpPacket>, Box<dyn Error + Send + Sync>> {
+    pub fn parse(buf: &[u8]) -> Result<ParseResult<HttpPacket>> {
         let mut headers = [httparse::EMPTY_HEADER; 64];
 
         let mut req = httparse::Request::new(&mut headers[..]);
@@ -63,9 +64,9 @@ impl HttpPacket {
     }
 
     pub async fn check_method(
-        packet: &HttpPacket,
+        packet: Arc<HttpPacket>,
         mut client: TcpStream,
-    ) -> Result<ConnectionStatus, Box<dyn Error + Send + Sync>> {
+    ) -> Result<ConnectionStatus> {
         if packet.method != "CONNECT" {
             let peer_addr = client
                 .peer_addr()
@@ -94,7 +95,7 @@ impl HttpPacket {
 }
 
 impl HttpPacketRes {
-    pub fn parse(buf: &[u8]) -> Result<ParseResult<HttpPacketRes>, Box<dyn Error + Send + Sync>> {
+    pub fn parse(buf: &[u8]) -> Result<ParseResult<HttpPacketRes>> {
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut resp = httparse::Response::new(&mut headers);
 

@@ -1,12 +1,12 @@
+use anyhow::Result;
 use bytes::Bytes;
-use std::error::Error;
 
 pub async fn forward_request_body(
     req_body: &mut http2::RecvStream,
     req_send_stream: &mut http2::SendStream<Bytes>,
     req_is_end_stream: bool,
     end_stream_on_headers: bool,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<()> {
     if req_is_end_stream {
         if !end_stream_on_headers {
             req_send_stream.send_data(Bytes::new(), true)?;

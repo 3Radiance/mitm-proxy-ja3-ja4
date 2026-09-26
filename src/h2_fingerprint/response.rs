@@ -1,13 +1,13 @@
+use anyhow::Result;
 use bytes::Bytes;
 use http::Response;
 use http2::server::SendResponse;
 use http2::RecvStream;
-use std::error::Error;
 
 pub async fn forward_response(
     response: Response<RecvStream>,
     respond: &mut SendResponse<Bytes>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<()> {
     let (head, mut body) = response.into_parts();
 
     let resp_is_end_stream = body.is_end_stream();

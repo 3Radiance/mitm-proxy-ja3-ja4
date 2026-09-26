@@ -1,9 +1,9 @@
+use anyhow::Result;
 use btls::ssl::ExtensionType;
-use http2::frame::{Priorities, Priority, StreamDependency};
-use http2::frame::{PseudoId, PseudoOrder, PseudoOrderBuilder};
-use http2::frame::{SettingId, SettingsOrder, SettingsOrderBuilder};
+use http2::frame::{Priority, StreamDependency};
+use http2::frame::{PseudoId};
+use http2::frame::{SettingId};
 use serde::Deserialize;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 
@@ -21,6 +21,7 @@ pub struct ProfileConfig {
     pub tcp: TcpConfig,
     pub tls: TlsConfig,
     pub http2: Http2Config,
+    pub http1: Http1Config,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -80,8 +81,15 @@ pub struct Http2Config {
     pub headers_priority: Option<H2HeadersPriority>,
     pub end_stream_on_headers: bool,
     pub pseudo_headers_order: Vec<String>,
-    pub headers_order: Vec<String>,
-    pub http_headers: HashMap<String, Option<String>>,
+    pub headers_order: Option<Vec<String>>,
+    pub http_headers: Option<HashMap<String, Option<String>>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct Http1Config {
+    pub headers_order: Option<Vec<String>>,
+    pub http_headers: Option<HashMap<String, Option<String>>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -111,7 +119,7 @@ pub struct Settings {
 }
 
 impl AppConfig {
-    pub fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn load_from_file(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
         let config: Self = serde_json::from_str(&content)?;
         Ok(config)
@@ -133,7 +141,7 @@ impl TlsConfig {
         bytes
     }
 
-    pub fn parse_extension(&self) -> Result<Option<Vec<ExtensionType>>, String> {
+    pub fn parse_extension(&self) -> anyhow::Result<Option<Vec<ExtensionType>>> {
         self.extensions_order
             .as_ref()
             .map(|extensions| {
@@ -175,7 +183,7 @@ impl TlsConfig {
                         "quic_transport_parameters" | "quic_transport_parameters_standard" => {
                             Ok(ExtensionType::QUIC_TRANSPORT_PARAMETERS_STANDARD)
                         }
-                        _ => Err(format!("unknown extension: {s}")),
+                        _ => Err(anyhow::anyhow!("unknown extension: {s}")),
                     })
                     .collect()
             })
@@ -184,7 +192,7 @@ impl TlsConfig {
 }
 
 impl Http2Config {
-    pub fn parse_pseudo_headers(&self) -> Result<Vec<PseudoId>, String> {
+    pub fn parse_pseudo_headers(&self) -> anyhow::Result<Vec<PseudoId>> {
         self.pseudo_headers_order
             .iter()
             .map(|name| match name.as_str() {
@@ -192,12 +200,12 @@ impl Http2Config {
                 ":path" => Ok(PseudoId::Path),
                 ":authority" => Ok(PseudoId::Authority),
                 ":scheme" => Ok(PseudoId::Scheme),
-                _ => Err(format!("unknown pseudo header: {name}")),
+                _ => Err(anyhow::anyhow!("unknown pseudo header: {name}")),
             })
             .collect()
     }
 
-    pub fn parse_settings_order(&self) -> Result<Vec<SettingId>, String> {
+    pub fn parse_settings_order(&self) -> anyhow::Result<Vec<SettingId>> {
         self.settings_order
             .iter()
             .map(|name| match name.to_ascii_lowercase().as_str() {
@@ -207,7 +215,7 @@ impl Http2Config {
                 "initial_window_size" => Ok(SettingId::InitialWindowSize),
                 "max_frame_size" => Ok(SettingId::MaxFrameSize),
                 "max_header_list_size" => Ok(SettingId::MaxHeaderListSize),
-                _ => Err(format!("unknown setting: {name}")),
+                _ => Err(anyhow::anyhow!("unknown setting: {name}")),
             })
             .collect()
     }
@@ -242,62 +250,65 @@ impl Http2Config {
     pub fn apply_http_headers(
         &self,
         incoming: &http::HeaderMap,
-    ) -> Result<Vec<(http::header::HeaderName, http::header::HeaderValue)>, String> {
+    ) -> anyhow::Result<Vec<(http::header::HeaderName, http::header::HeaderValue)>> {
         use http::header::{HeaderName, HeaderValue};
         use std::collections::HashSet;
 
         let mut result = Vec::new();
         let mut processed = HashSet::new();
 
-        for configured_name in &self.headers_order {
-            let name_lower = configured_name.to_ascii_lowercase();
+        if let Some(order) = &self.headers_order {
+            for configured_name in order {
+                let name_lower = configured_name.to_ascii_lowercase();
 
-            let name = HeaderName::from_bytes(name_lower.as_bytes())
-                .map_err(|err| format!("invalid header name '{configured_name}': {err}"))?;
+                let name = HeaderName::from_bytes(name_lower.as_bytes()).map_err(|err| {
+                    anyhow::anyhow!("[H2] invalid header name '{configured_name}': {err}")
+                })?;
 
-            processed.insert(name.clone());
+                processed.insert(name.clone());
 
-            match self.http_headers.get(&name_lower) {
-                Some(Some(value)) => {
-                    let value = HeaderValue::from_str(value).map_err(|err| {
-                        format!("invalid value for header '{configured_name}': {err}")
-                    })?;
+                let configured_val = self
+                    .http_headers
+                    .as_ref()
+                    .and_then(|map| map.get(&name_lower));
 
-                    result.push((name, value));
-                }
-
-                Some(None) => {}
-
-                None => {
-                    for value in incoming.get_all(&name).iter() {
-                        result.push((name.clone(), value.clone()));
+                match configured_val {
+                    Some(Some(value)) => {
+                        let value = HeaderValue::from_str(value).map_err(|err| {
+                            anyhow::anyhow!("[H2] invalid value for header '{configured_name}': {err}")
+                        })?;
+                        result.push((name, value));
+                    }
+                    Some(None) => {}
+                    None => {
+                        for value in incoming.get_all(&name).iter() {
+                            result.push((name.clone(), value.clone()));
+                        }
                     }
                 }
             }
         }
 
-        for (configured_name, configured_value) in &self.http_headers {
-            let name_lower = configured_name.to_ascii_lowercase();
+        if let Some(map) = &self.http_headers {
+            for (configured_name, configured_value) in map {
+                let name_lower = configured_name.to_ascii_lowercase();
 
-            let name = HeaderName::from_bytes(name_lower.as_bytes())
-                .map_err(|err| format!("invalid header name '{configured_name}': {err}"))?;
+                let name = HeaderName::from_bytes(name_lower.as_bytes()).map_err(|err| {
+                    anyhow::anyhow!("[H2] invalid header name '{configured_name}': {err}")
+                })?;
 
-            if processed.contains(&name) {
-                continue;
-            }
-
-            processed.insert(name.clone());
-
-            match configured_value {
-                Some(value) => {
-                    let value = HeaderValue::from_str(value).map_err(|err| {
-                        format!("invalid value for header '{configured_name}': {err}")
-                    })?;
-
-                    result.push((name, value));
+                if processed.contains(&name) {
+                    continue;
                 }
 
-                None => {}
+                processed.insert(name.clone());
+
+                if let Some(value) = configured_value {
+                    let value = HeaderValue::from_str(value).map_err(|err| {
+                        anyhow::anyhow!("[H2] invalid value for header '{configured_name}': {err}")
+                    })?;
+                    result.push((name, value));
+                }
             }
         }
 
@@ -305,7 +316,6 @@ impl Http2Config {
             if processed.contains(name) {
                 continue;
             }
-
             result.push((name.clone(), value.clone()));
         }
 
@@ -361,6 +371,83 @@ impl Http2Config {
         }
 
         bytes
+    }
+}
+
+impl Http1Config {
+    pub fn apply_http_headers(
+        &self,
+        incoming: &http::HeaderMap,
+    ) -> anyhow::Result<Vec<(String, http::header::HeaderValue)>> {
+        use http::header::{HeaderName, HeaderValue};
+        use std::collections::HashSet;
+
+        let mut result = Vec::new();
+        let mut processed = HashSet::new();
+
+        if let Some(order) = &self.headers_order {
+            for configured_name in order {
+                let name_lower = configured_name.to_ascii_lowercase();
+
+                let header_name = HeaderName::from_bytes(name_lower.as_bytes()).map_err(|err| {
+                    anyhow::anyhow!("[HTTP/1.1] invalid header name '{configured_name}': {err}")
+                })?;
+
+                processed.insert(header_name.clone());
+
+                let configured_val = self
+                    .http_headers
+                    .as_ref()
+                    .and_then(|map| map.get(&name_lower));
+
+                match configured_val {
+                    Some(Some(value)) => {
+                        let value = HeaderValue::from_str(value).map_err(|err| {
+                            anyhow::anyhow!(
+                                "[HTTP/1.1] invalid value for header '{configured_name}': {err}"
+                            )
+                        })?;
+                        result.push((configured_name.clone(), value));
+                    }
+                    Some(None) => {}
+                    None => {
+                        for value in incoming.get_all(&header_name).iter() {
+                            result.push((configured_name.clone(), value.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(map) = &self.http_headers {
+            for (configured_name, configured_value) in map {
+                let name_lower = configured_name.to_ascii_lowercase();
+
+                let header_name = HeaderName::from_bytes(name_lower.as_bytes()).map_err(|err| {
+                    anyhow::anyhow!("[HTTP/1.1] invalid header name '{configured_name}': {err}")
+                })?;
+
+                if processed.contains(&header_name) {
+                    continue;
+                }
+
+                processed.insert(header_name.clone());
+
+                if let Some(value) = configured_value {
+                    let value = HeaderValue::from_str(value).map_err(|err| {
+                        anyhow::anyhow!("[HTTP/1.1] invalid value for header '{configured_name}': {err}")
+                    })?;
+                    result.push((configured_name.clone(), value));
+                }
+            }
+        }
+        for (name, value) in incoming.iter() {
+            if processed.contains(name) {
+                continue;
+            }
+            result.push((name.as_str().to_string(), value.clone()));
+        }
+
+        Ok(result)
     }
 }
 

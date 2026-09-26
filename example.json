@@ -129,6 +129,10 @@
                 "accept-language": "en-US,en;q=0.6",
                 "te": null
             }
+        },
+        "http1": {
+            "headers_order": null,
+            "http_headers": null
         }
     }
 }

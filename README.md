@@ -6,7 +6,7 @@ An HTTP MITM proxy built with Rust, `tokio`, and `btls`.
 
 > **Currently in MVP (Minimum Viable Product) stage.**
 
-This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, and the exact extension order are all driven by a JSON profile. **Encrypted Client Hello (ECH) is intentionally not implemented yet** — it's on the roadmap. HTTP/2 (Akamai) and TCP (L4) fingerprinting are the next layers to be built.
+This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, extension permutation/ordering, OCSP stapling, Certificate Transparency (SCT), session tickets, and ALPS are all driven by a JSON profile. **Encrypted Client Hello (ECH) is intentionally not implemented yet** — it's on the roadmap. HTTP/2 fingerprinting (Akamai) is now fully configurable as well. TCP (L4) fingerprinting is the next layer to be built.
 
 ### TLS Fingerprint Spoofing Configuration
 
@@ -31,7 +31,8 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
   * Record size limit.
   * Certificate compression (`brotli`, `zlib`, `zstd`) with real decompression support.
   * GREASE.
-  * Exact TLS extension ordering in the ClientHello.
+  * Exact TLS extension ordering in the ClientHello, or Chrome-style random permutation.
+  * OCSP stapling, Certificate Transparency (SCT), session ticket, and ALPS (Application-Layer Protocol Settings) toggles — see `TLS.md` for details.
 
 * **Upstream-First ALPN Negotiation** — The proxy establishes and negotiates TLS with the upstream server before completing the browser-side TLS handshake. The ALPN selected by the upstream server is then used to configure the client-side TLS acceptor, preventing the browser from selecting a protocol that the upstream connection does not support.
 
@@ -52,8 +53,6 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 * **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
 
-
-
 ### Roadmap & Future Plans
 
 The current architecture is a foundation for highly advanced fingerprint spoofing:
@@ -65,7 +64,6 @@ The current architecture is a foundation for highly advanced fingerprint spoofin
 * **L4 TCP Fingerprinting (NFQueue)**
 
   Implement a Layer 4 module using Linux `nfqueue` (Netfilter Queue) to spoof TCP fingerprints, including TTL, TCP window size, MSS, window scaling, and the exact order of TCP options.
-
 
 ## Requirements
 
@@ -129,7 +127,7 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 
 * `src/tls_fingerprint/tls.rs`: `btls` / `tokio-btls` TLS acceptor and connector configuration, upstream TLS negotiation, client-side TLS handshake handling, and ALPN negotiation.
 
-* `src/tls_fingerprint/helpers.rs`: Individual TLS fingerprint configuration helpers for cipher suites, curves, signature algorithms, ALPN, extension order, record size limit, certificate compression, and GREASE.
+* `src/tls_fingerprint/helpers.rs`: Individual TLS fingerprint configuration helpers for cipher suites, curves, signature algorithms, ALPN, extension order/permutation, record size limit, certificate compression, GREASE, OCSP stapling, SCT, session tickets, and ALPS.
 
 * `src/tls_fingerprint/compression.rs`: Certificate compression implementations for Brotli, zlib, and zstd.
 
@@ -169,7 +167,6 @@ src/
 └── h2_fingerprint/
     ├── mod.rs
     ├── h2.rs
-    ├── connection.rs
     ├── request.rs
     ├── request_body.rs
     ├── response.rs

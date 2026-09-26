@@ -132,3 +132,41 @@ next_proto_neg (or npn)
 channel_id
 record_size_limit
 ```
+
+## TLS Boolean Toggles
+
+A handful of extensions are controlled by a single `bool` in `TlsConfig`
+rather than a list or an order — either the extension/behavior is present,
+or it isn't:
+
+- **`permute_extensions`** — randomizes the order of TLS extensions on
+  every handshake, matching Chrome's behavior (`SSL_CTX_set_permute_extensions`
+  under the hood). **Do not combine this with a populated `extensions_order`**
+  — the two express contradictory intents (a fixed, caller-chosen order vs.
+  a random one on every handshake) and only one should be set per profile.
+  Chrome-style profiles use `permute_extensions: true` with GREASE and no
+  fixed order; Firefox-style profiles use a fixed `extensions_order` and
+  leave this `false`.
+- **`status_request`** — enables OCSP stapling (the `status_request`
+  extension). Real browsers send this by default.
+- **`signed_certificate_timestamp`** — enables the Certificate Transparency
+  SCT extension. Also on by default in real browsers.
+- **`session_ticket`** — controls whether the `session_ticket` extension is
+  sent at all (`SSL_OP_NO_TICKET` under the hood). Since each upstream
+  connection is established fresh rather than reusing a cached session, this
+  only affects whether the extension is *present* in the ClientHello for
+  fingerprinting purposes — it does not enable real session resumption.
+- **`alps`** — enables Application-Layer Protocol Settings (ALPS). When on,
+  the proxy sends an ALPS payload for the `h2` protocol built from the same
+  `settings` / `settings_order` fields used for the real HTTP/2 SETTINGS
+  frame (see `HTTP2.md`) — real browsers use this exact same encoding for
+  the ALPS payload, so no separate configuration is needed. If `settings`
+  is empty, an empty ALPS payload is sent.
+
+## A note on `renegotiation_info`
+
+The `renegotiation_info` extension (RFC 5746, Secure Renegotiation
+Indication) is not user-toggleable and doesn't need to be — BoringSSL always
+sends it as a baseline security measure, the same way every modern browser
+does. It only needs a position in `extensions_order`; there's nothing to
+enable or disable.

@@ -17,8 +17,9 @@ pub fn set_select_certificate_callback(ca: Arc<MitmCa>, builder: &mut SslContext
         };
 
         match ca.get_or_issue_cert(domain) {
-            Ok((x509, pkey)) => {
-                if ssl.set_certificate(&x509).is_err() || ssl.set_private_key(&pkey).is_err() {
+            Ok(cert_pair) => {
+                let (x509, pkey) = cert_pair.as_ref();
+                if ssl.set_certificate(x509).is_err() || ssl.set_private_key(pkey).is_err() {
                     return Err(SelectCertError::ERROR);
                 }
                 Ok(())

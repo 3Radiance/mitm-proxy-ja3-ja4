@@ -2,7 +2,7 @@
     "firefox_153_linux": {
         "config": {
             "port": 9090,
-            "upstream_proxy": null,
+            "upstream_proxy": "127.0.0.1:10808",
             "cert": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.crt",
             "key": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.key"
         },

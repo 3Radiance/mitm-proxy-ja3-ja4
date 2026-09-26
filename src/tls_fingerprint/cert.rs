@@ -1,9 +1,11 @@
-use dashmap::DashMap;
+use moka::sync::Cache;
 use rcgen::{BasicConstraints, Certificate, CertificateParams, DnType, IsCa, KeyPair, SanType};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 use time::OffsetDateTime;
 
 pub type BoringCertPair = (btls::x509::X509, btls::pkey::PKey<btls::pkey::Private>);
@@ -11,7 +13,7 @@ pub type BoringCertPair = (btls::x509::X509, btls::pkey::PKey<btls::pkey::Privat
 pub struct MitmCa {
     ca_cert: Certificate,
     ca_keypair: KeyPair,
-    cache: DashMap<String, BoringCertPair>,
+    cache: Cache<String, Arc<BoringCertPair>>,
 }
 
 impl MitmCa {
@@ -42,10 +44,15 @@ impl MitmCa {
             (cert, keypair)
         };
 
+        let cache = Cache::builder()
+            .max_capacity(10_000)
+            .time_to_idle(Duration::from_secs(3600))
+            .build();
+
         Ok(Self {
             ca_cert,
             ca_keypair,
-            cache: DashMap::new(),
+            cache,
         })
     }
 
@@ -81,20 +88,21 @@ impl MitmCa {
     pub fn get_or_issue_cert(
         &self,
         domain: &str,
-    ) -> Result<BoringCertPair, Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(cached) = self.cache.get(domain) {
-            println!("[CA] Found cached cert for {}", domain);
-            return Ok(cached.value().clone());
-        }
+    ) -> Result<Arc<BoringCertPair>, Box<dyn std::error::Error + Send + Sync>> {
+        let cert_pair = self
+            .cache
+            .try_get_with(domain.to_string(), || {
+                println!("[CA] Issuing cert for {}", domain);
+                let (cert_pem, key_pem) = self.issue_cert_for_domain(domain)?;
 
-        let (cert_pem, key_pem) = self.issue_cert_for_domain(domain)?;
-        println!("[CA] Issuing cert for {}", domain);
+                let x509 = btls::x509::X509::from_pem(cert_pem.as_bytes())?;
+                let pkey = btls::pkey::PKey::private_key_from_pem(key_pem.as_bytes())?;
 
-        let x509 = btls::x509::X509::from_pem(cert_pem.as_bytes())?;
-        let pkey = btls::pkey::PKey::private_key_from_pem(key_pem.as_bytes())?;
-
-        let cert_pair = (x509, pkey);
-        self.cache.insert(domain.to_string(), cert_pair.clone());
+                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Arc::new((x509, pkey)))
+            })
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                format!("[CA] Failed to get or issue cert: {e}").into()
+            })?;
 
         Ok(cert_pair)
     }

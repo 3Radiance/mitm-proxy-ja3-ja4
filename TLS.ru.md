@@ -109,9 +109,10 @@ signature_algorithms
 srtp
 alpn
 padding
+signed_certificate_timestamp (or certificate_timestamp)
 extended_master_secret
 quic_transport_parameters_legacy
-quic_transport_parameters_standard
+quic_transport_parameters_standard (or quic_transport_parameters)
 cert_compression
 session_ticket
 supported_groups
@@ -127,9 +128,8 @@ renegotiation_info
 delegated_credentials
 application_settings
 application_settings_old
-encrypted_client_hello
-certificate_timestamp
-next_proto_neg
+encrypted_client_hello (or ech)
+next_proto_neg (or npn)
 channel_id
 record_size_limit
 ```

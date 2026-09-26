@@ -1,4 +1,3 @@
-use crate::config::*;
 use crate::h2_fingerprint::h2::ConnectionData;
 use crate::h2_fingerprint::request_body::*;
 use crate::h2_fingerprint::response::*;

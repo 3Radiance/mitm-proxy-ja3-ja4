@@ -43,7 +43,7 @@ pub async fn build_upstream_h2_builder(
         builder.headers_stream_dependency(dependency);
     }
 
-    builder.initial_connection_window_size(config.connection_window_update);
+    builder.initial_connection_window_size(config.connection_window_update + 65535);
 
     let initial_id = if let Some(explicit) = config.initial_stream_id {
         explicit
@@ -102,9 +102,13 @@ pub async fn upstream_reconnect(
 
     remote.set_nodelay(true)?;
 
-    let (remote, alpn) =
-        tls_fingerprint::tls::create_ssl_acceptor_upstream(remote, &proxydata.sni, proxydata.tls)
-            .await?;
+    let (remote, alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
+        remote,
+        &proxydata.sni,
+        proxydata.tls,
+        proxydata.http2,
+    )
+    .await?;
 
     Ok(remote)
 }

@@ -49,7 +49,6 @@ pub async fn connection(config: ProxyConfig) -> Result<(), Box<dyn Error + Send 
 }
 
 async fn handle(mut client: TcpStream, handle: Data) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut buff: Vec<u8> = Vec::new();
     let mut buf = [0u8; 1024];
     let packet = loop {
@@ -93,13 +92,17 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<(), Box<dyn Error
 
     let sni = get_sni_from_packet(&packet)?;
 
-    let (mut remote, selected_alpn) =
-        tls_fingerprint::tls::create_ssl_acceptor_upstream(remote, &sni, handle.tls.clone())
-            .await?;
+    let (mut remote, selected_alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
+        remote,
+        &sni,
+        handle.tls.clone(),
+        handle.http2.clone(),
+    )
+    .await?;
 
     client.write_all(HTTP_200_OK).await?;
 
-    let acceptor = tls_fingerprint::tls::create_ssl_acceptor(handle.ca, tx, &selected_alpn)?;
+    let acceptor = tls_fingerprint::tls::create_ssl_acceptor(handle.ca, &selected_alpn)?;
 
     let mut client = tls_fingerprint::tls::handle_tls(client, acceptor).await?;
 

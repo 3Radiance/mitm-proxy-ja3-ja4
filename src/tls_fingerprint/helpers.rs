@@ -2,16 +2,11 @@ use crate::config::*;
 use crate::tls_fingerprint::cert::MitmCa;
 use crate::tls_fingerprint::compression::{BrotliCompressor, ZlibCompressor, ZstdCompressor};
 
-use btls::ssl::{AlpnError, ClientHello, NameType, SelectCertError, SslContextBuilder};
+use btls::ssl::{AlpnError, ClientHello, NameType, SelectCertError, SslContextBuilder, SslOptions};
 
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
-pub fn set_select_certificate_callback(
-    ca: Arc<MitmCa>,
-    sni_tx: mpsc::UnboundedSender<String>,
-    builder: &mut SslContextBuilder,
-) {
+pub fn set_select_certificate_callback(ca: Arc<MitmCa>, builder: &mut SslContextBuilder) {
     builder.set_select_certificate_callback(move |mut client_hello: ClientHello<'_>| {
         let ssl = client_hello.ssl_mut();
         let domain = match ssl.servername(NameType::HOST_NAME) {
@@ -20,8 +15,6 @@ pub fn set_select_certificate_callback(
                 return Err(SelectCertError::ERROR);
             }
         };
-
-        let _ = sni_tx.send(domain.to_string());
 
         match ca.get_or_issue_cert(domain) {
             Ok((x509, pkey)) => {
@@ -76,7 +69,7 @@ pub fn set_cipher_suites(
     let ciphers = tls.cipher_suites.join(":");
 
     builder
-        .set_strict_cipher_list(&ciphers)
+        .set_cipher_list(&ciphers)
         .map_err(|e| format!("[TLS] Failed to set cipher list: {e}"))?;
 
     Ok(())
@@ -118,10 +111,11 @@ pub fn set_extensions_order(
     builder: &mut SslContextBuilder,
     tls: Arc<TlsConfig>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ext = tls.parse_extension()?;
-    builder
-        .set_extension_permutation(&ext)
-        .map_err(|e| format!("[TLS] Failed to set extension order: {e}"))?;
+    if let Some(ext) = tls.parse_extension()? {
+        builder
+            .set_extension_permutation(&ext)
+            .map_err(|e| format!("[TLS] Failed to set extension order: {e}"))?;
+    }
 
     Ok(())
 }
@@ -157,4 +151,28 @@ pub fn set_cert_compression(
 
 pub fn set_grease(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) {
     builder.set_grease_enabled(tls.grease_enabled);
+}
+
+pub fn set_permute_extensions(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) {
+    builder.set_permute_extensions(tls.permute_extensions);
+}
+
+pub fn set_status_request(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) {
+    if tls.status_request {
+        builder.enable_ocsp_stapling();
+    }
+}
+
+pub fn set_signed_certificate_timestamp(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) {
+    if tls.signed_certificate_timestamp {
+        builder.enable_signed_cert_timestamps();
+    }
+}
+
+pub fn set_session_ticket(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) {
+    if tls.session_ticket {
+        builder.clear_options(SslOptions::NO_TICKET);
+    } else {
+        builder.set_options(SslOptions::NO_TICKET);
+    }
 }

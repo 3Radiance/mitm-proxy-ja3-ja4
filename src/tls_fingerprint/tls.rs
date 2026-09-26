@@ -6,12 +6,13 @@ use btls::ssl::{Ssl, SslAcceptor, SslConnector, SslMethod};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
 use tokio_btls::SslStream;
+
+use btls_sys::SSL_add_application_settings;
+use foreign_types_shared::ForeignType;
 
 pub fn create_ssl_acceptor(
     ca: Arc<MitmCa>,
-    sni_tx: mpsc::UnboundedSender<String>,
     alpn: &Option<Vec<u8>>,
 ) -> Result<SslAcceptor, Box<dyn std::error::Error + Send + Sync>> {
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
@@ -21,7 +22,7 @@ pub fn create_ssl_acceptor(
     } else {
         set_alpn_select_callback(&mut builder, b"\x08http/1.1".to_vec());
     }
-    set_select_certificate_callback(ca, sni_tx, &mut builder);
+    set_select_certificate_callback(ca, &mut builder);
     Ok(builder.build())
 }
 
@@ -29,6 +30,7 @@ pub async fn create_ssl_acceptor_upstream(
     upstream: TcpStream,
     target_host: &str,
     tls: Arc<TlsConfig>,
+    http2: Arc<Http2Config>,
 ) -> Result<(SslStream<TcpStream>, Option<Vec<u8>>), Box<dyn std::error::Error + Send + Sync>> {
     let mut builder = SslConnector::builder(SslMethod::tls())?;
     builder.set_default_verify_paths()?;
@@ -40,12 +42,39 @@ pub async fn create_ssl_acceptor_upstream(
     set_record_size_limit(&mut builder, tls.clone());
     set_cert_compression(&mut builder, tls.clone())?;
     set_grease(&mut builder, tls.clone());
-    set_extensions_order(&mut builder, tls)?;
+    set_permute_extensions(&mut builder, tls.clone());
+    set_status_request(&mut builder, tls.clone());
+    set_signed_certificate_timestamp(&mut builder, tls.clone());
+    set_session_ticket(&mut builder, tls.clone());
+    set_extensions_order(&mut builder, tls.clone())?;
 
     let connector = builder.build();
 
-    let ssl = connector.configure()?.into_ssl(target_host)?;
+    let mut ssl = connector.configure()?.into_ssl(target_host)?;
+
+    if tls.alps {
+        ssl.set_alps_use_new_codepoint(true);
+
+        let alps_payload = http2.encode_alps_payload();
+        let proto = b"h2";
+
+        unsafe {
+            let res = SSL_add_application_settings(
+                ssl.as_ptr() as *mut _,
+                proto.as_ptr(),
+                proto.len(),
+                alps_payload.as_ptr(),
+                alps_payload.len(),
+            );
+
+            if res != 1 {
+                eprintln!("[TLS] Warning: Failed to set ALPS settings payload");
+            }
+        }
+    }
+
     let mut s = SslStream::new(ssl, upstream)?;
+
     Pin::new(&mut s).connect().await?;
 
     let alpn = s.ssl().selected_alpn_protocol().map(|p| {

@@ -23,89 +23,111 @@
         "tls": {
             "cipher_suites": [
                 "TLS_AES_128_GCM_SHA256",
+                "TLS_AES_256_GCM_SHA384",
                 "TLS_CHACHA20_POLY1305_SHA256",
-                "TLS_RSA_WITH_AES_128_GCM_SHA256",
                 "ECDHE-ECDSA-AES128-GCM-SHA256",
                 "ECDHE-RSA-AES128-GCM-SHA256",
+                "ECDHE-ECDSA-AES256-GCM-SHA384",
+                "ECDHE-RSA-AES256-GCM-SHA384",
                 "ECDHE-ECDSA-CHACHA20-POLY1305",
                 "ECDHE-RSA-CHACHA20-POLY1305",
-                "ECDHE-ECDSA-AES256-GCM-SHA384",
-                "ECDHE-RSA-AES256-GCM-SHA384"
+                "ECDHE-RSA-AES128-SHA",
+                "ECDHE-RSA-AES256-SHA",
+                "TLS_RSA_WITH_AES_128_GCM_SHA256",
+                "TLS_RSA_WITH_AES_256_GCM_SHA384",
+                "TLS_RSA_WITH_AES_128_CBC_SHA",
+                "TLS_RSA_WITH_AES_256_CBC_SHA"
             ],
             "alpn": [
                 "h2",
                 "http/1.1"
             ],
             "curves": [
+                "X25519MLKEM768",
+                "X25519",
                 "P-256",
-                "P-384",
-                "P-521",
-                "X25519"
+                "P-384"
             ],
             "signature_algorithms": [
+                "rsa_pss_rsae_sha256",
+                "rsa_pss_rsae_sha384",
+                "rsa_pss_rsae_sha512",
                 "ecdsa_secp256r1_sha256",
                 "rsa_pss_rsae_sha256",
-                "rsa_pkcs1_sha256"
+                "rsa_pkcs1_sha256",
+                "ecdsa_secp384r1_sha384",
+                "rsa_pss_rsae_sha384",
+                "rsa_pkcs1_sha384",
+                "rsa_pss_rsae_sha512",
+                "rsa_pkcs1_sha512"
             ],
-            "extensions_order": [
-                "extended_master_secret",
-                "server_name",
-                "alpn",
-                "renegotiation_info",
-                "supported_groups",
-                "ec_point_formats",
-                "session_ticket",
-                "status_request",
-                "cert_compression",
-                "signature_algorithms",
-                "supported_versions",
-                "key_share"
-            ],
+            "extensions_order": null,
             "cert_compression": [
                 "brotli"
             ],
-            "grease_enabled": false,
+            "permute_extensions": true,
+            "status_request": true,
+            "signed_certificate_timestamp": true,
+            "alps": true,
+            "session_ticket": true,
+            "grease_enabled": true,
             "enable_ech": true,
-            "record_size_limit": 4001
+            "record_size_limit": null
         },
         "http2": {
             "settings": {
                 "header_table_size": 65536,
                 "enable_push": false,
                 "max_concurrent_streams": null,
-                "initial_window_size": 131072,
-                "max_frame_size": 16384,
-                "max_header_list_size": null
+                "initial_window_size": 6291456,
+                "max_frame_size": null,
+                "max_header_list_size": 262144
             },
             "settings_order": [
                 "HEADER_TABLE_SIZE",
                 "ENABLE_PUSH",
                 "INITIAL_WINDOW_SIZE",
-                "MAX_FRAME_SIZE",
                 "MAX_HEADER_LIST_SIZE"
             ],
-            "connection_window_update": 12582912,
+            "connection_window_update": 15663105,
             "initial_stream_id": null,
             "priority_frames": null,
             "headers_priority": {
-                "exclusive": false,
+                "exclusive": true,
                 "depends_on": 0,
-                "weight": 41
+                "weight": 255
             },
-            "end_stream_on_headers": false,
+            "end_stream_on_headers": true,
             "pseudo_headers_order": [
                 ":method",
-                ":path",
                 ":authority",
-                ":scheme"
+                ":scheme",
+                ":path"
             ],
             "headers_order": [
+                "cache-control",
+                "sec-ch-ua",
+                "sec-ch-ua-mobile",
+                "sec-ch-ua-platform",
+                "upgrade-insecure-requests",
                 "user-agent",
-                "accept-language"
+                "accept",
+                "sec-fetch-site",
+                "sec-fetch-mode",
+                "sec-fetch-user",
+                "sec-fetch-dest",
+                "accept-encoding",
+                "accept-language",
+                "priority"
             ],
             "http_headers": {
-                "user-agent": "Mozilla/5.0 (X11; Linux x86_64; rv:154.0) Gecko/20100101 Firefox/154.0",
-                "accept-language": "en-US,en;q=0.6"
+                "cache-control": "max-age=0",
+                "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\"",
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": "\"Linux\"",
+                "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+                "accept-language": "en-US,en;q=0.6",
+                "te": null
             }
         }
     }

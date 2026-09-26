@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 httparse = "1.8"
-rcgen = "0.13"
+rcgen = { version = "0.13", features = ["x509-parser"] }
 btls = "0.5"
 time = "0.3"
 tokio-btls = "0.5"

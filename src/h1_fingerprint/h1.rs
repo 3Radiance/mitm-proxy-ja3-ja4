@@ -1,5 +1,5 @@
-use anyhow::Result;
 use crate::h2_fingerprint::h2::ConnectionData;
+use anyhow::Result;
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;

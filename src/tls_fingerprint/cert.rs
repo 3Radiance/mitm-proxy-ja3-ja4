@@ -23,11 +23,11 @@ impl MitmCa {
         let key_path = Path::new(key);
 
         let (ca_cert, ca_keypair) = if cert_path.exists() && key_path.exists() {
-            let _cert_pem = std::fs::read_to_string(cert_path)?;
+            let cert_pem = std::fs::read_to_string(cert_path)?;
             let key_pem = std::fs::read_to_string(key_path)?;
             let keypair = KeyPair::from_pem(&key_pem)?;
 
-            let cert = Self::build_ca_certificate(&keypair)?;
+            let cert = CertificateParams::from_ca_cert_pem(&cert_pem)?.self_signed(&keypair)?;
 
             println!("[CA] Loaded existing MITM CA from disk");
             (cert, keypair)

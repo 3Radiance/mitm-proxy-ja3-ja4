@@ -1,6 +1,6 @@
 use super::http::*;
 use crate::h2_fingerprint::h2::ConnectionData;
-use crate::{h1_fingerptint, h2_fingerprint};
+use crate::{h1_fingerprint, h2_fingerprint};
 
 use crate::tls_fingerprint;
 use crate::{Data, ProxyConfig};
@@ -122,7 +122,7 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
         Some([_, b'h', b'2']) => {
             h2_fingerprint::h2::handle_h2(client, remote, proxydata).await?;
         }
-        _ => h1_fingerptint::h1::handle_h1(client, remote, proxydata).await?,
+        _ => h1_fingerprint::h1::handle_h1(client, remote, proxydata).await?,
     }
 
     Ok(())

@@ -1,5 +1,5 @@
 mod config;
-mod h1_fingerptint;
+mod h1_fingerprint;
 mod h2_fingerprint;
 mod proxy;
 mod tls_fingerprint;

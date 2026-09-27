@@ -9,6 +9,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio::time::Duration;
 use tokio_btls::SslStream;
 
 use super::request::*;
@@ -30,13 +31,21 @@ pub async fn handle_h2(
     remote: SslStream<TcpStream>,
     proxydata: ConnectionData,
 ) -> Result<()> {
-    let mut server_conn = http2::server::handshake(client).await?;
-    crate::log_tag!(info, "H2", "Incoming client HTTP/2 connection established");
-
     let upstream_builder = build_upstream_h2_builder(proxydata.http2.clone()).await?;
 
-    let (upstream_send, upstream_conn) = upstream_builder.handshake::<_, Bytes>(remote).await?;
-    crate::log_tag!(info, "H2", "Upstream HTTP/2 connection established");
+    let (server_res, upstream_res) = tokio::join!(
+        tokio::time::timeout(Duration::from_secs(5), http2::server::handshake(client)),
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            upstream_builder.handshake::<_, Bytes>(remote)
+        )
+    );
+
+    let mut server_conn =
+        server_res.map_err(|_| anyhow::anyhow!("client h2 handshake timeout"))??;
+
+    let (upstream_send, upstream_conn) =
+        upstream_res.map_err(|_| anyhow::anyhow!("upstream h2 handshake timeout"))??;
 
     let upstream_send = Arc::new(Mutex::new(upstream_send));
 

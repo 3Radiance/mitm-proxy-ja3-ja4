@@ -17,12 +17,16 @@ use hickory_proto::rr::rdata::svcb::{SvcParamKey, SvcParamValue};
 use hickory_proto::rr::{Name, RData, RecordType};
 
 use bytes::Bytes;
+use std::collections::HashMap;
+use tokio::sync::Mutex;
+use tokio::time::Duration;
 
 use moka::future::Cache;
 
 #[derive(Clone)]
 pub struct EchCache {
     pub cache: Cache<String, Option<Vec<u8>>>,
+    pub inflight: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 pub async fn set_ech(
@@ -49,6 +53,25 @@ pub async fn set_ech(
 
         return Ok(());
     }
+    let domain_lock = {
+        let mut map = cache.inflight.lock().await;
+        map.entry(target_domain.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = domain_lock.lock().await;
+
+    if let Some(ech_config) = cache.cache.get(target_domain).await {
+        crate::log_tag!(debug, "ECH", "CACHE HIT: {}", target_domain);
+        if let Some(config) = ech_config {
+            ssl.set_ech_config_list(&config)?;
+        } else if tls.enable_ech_grease {
+            ssl.set_enable_ech_grease(true);
+        }
+
+        return Ok(());
+    }
+
     let doh_domain: &str = {
         let mut rng = rand::thread_rng();
         tls.doh
@@ -67,7 +90,11 @@ pub async fn set_ech(
     .await?;
 
     let upstream_builder = build_upstream_h2_builder(http2).await?;
-    let (doh_send, doh_conn) = upstream_builder.handshake::<_, Bytes>(remote).await?;
+    let (doh_send, doh_conn) = tokio::time::timeout(
+        Duration::from_secs(5),
+        upstream_builder.handshake::<_, Bytes>(remote),
+    )
+    .await??;
 
     tokio::spawn(async move {
         let _ = doh_conn.await;
@@ -75,14 +102,14 @@ pub async fn set_ech(
 
     let query_bytes = build_msg(target_domain)?;
 
-    let mut send_request = doh_send.ready().await?;
+    let mut send_request = tokio::time::timeout(Duration::from_secs(5), doh_send.ready()).await??;
 
     let req = build_req(target_domain)?;
 
     let (response, mut req_body) = send_request.send_request(req, false)?;
     req_body.send_data(bytes::Bytes::from(query_bytes), true)?;
 
-    let response = response.await?;
+    let response = tokio::time::timeout(Duration::from_secs(5), response).await??;
 
     let (head, mut body) = response.into_parts();
 
@@ -91,7 +118,7 @@ pub async fn set_ech(
     }
 
     let mut resp_bytes = Vec::new();
-    while let Some(chunk) = body.data().await {
+    while let Some(chunk) = tokio::time::timeout(Duration::from_secs(5), body.data()).await? {
         resp_bytes.extend_from_slice(&chunk?);
     }
 

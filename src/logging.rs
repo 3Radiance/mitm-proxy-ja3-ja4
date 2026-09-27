@@ -3,7 +3,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 #[macro_export]
 macro_rules! log_tag {
     ($level:ident, $tag:expr, $($arg:tt)*) => {
-        tracing::$level!(target: $tag, "[{}] {}", $tag, format_args!($($arg)*));
+        tracing::$level!(target: $tag, "[{}] {}", $tag, format_args!($($arg)*))
     };
 }
 

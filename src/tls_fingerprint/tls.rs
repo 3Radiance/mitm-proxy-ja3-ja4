@@ -8,6 +8,7 @@ use btls::ssl::{Ssl, SslAcceptor, SslConnector, SslMethod};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio::time::Duration;
 use tokio_btls::SslStream;
 
 pub fn create_ssl_acceptor(ca: Arc<MitmCa>, alpn: &Option<Vec<u8>>) -> Result<SslAcceptor> {
@@ -58,7 +59,7 @@ pub async fn create_ssl_acceptor_upstream(
 
     let mut s = SslStream::new(ssl, client)?;
 
-    Pin::new(&mut s).connect().await?;
+    tokio::time::timeout(Duration::from_secs(5), Pin::new(&mut s).connect()).await??;
 
     let alpn = s.ssl().selected_alpn_protocol().map(|p| {
         let mut wire = Vec::with_capacity(1 + p.len());
@@ -71,7 +72,14 @@ pub async fn create_ssl_acceptor_upstream(
         .as_deref()
         .map(|v| String::from_utf8_lossy(v).into_owned())
         .unwrap_or_else(|| "<none>".to_string());
-    crate::log_tag!(info, "TLS", "Upstream TLS handshake completed for {} with ALPN: {}", target_host, alpn_debug);
+
+    crate::log_tag!(
+        info,
+        "TLS",
+        "Upstream TLS handshake completed for {} with ALPN: {}",
+        target_host,
+        alpn_debug
+    );
 
     Ok((s, alpn))
 }
@@ -80,7 +88,9 @@ pub async fn handle_tls(client: TcpStream, acceptor: SslAcceptor) -> Result<SslS
     let ssl = Ssl::new(acceptor.context())?;
     let mut tls_stream = SslStream::new(ssl, client)?;
 
-    if let Err(e) = Pin::new(&mut tls_stream).accept().await {
+    if let Err(e) =
+        tokio::time::timeout(Duration::from_secs(5), Pin::new(&mut tls_stream).accept()).await?
+    {
         crate::log_tag!(error, "TLS", "Handshake failed: {}", e);
         return Err(e.into());
     }

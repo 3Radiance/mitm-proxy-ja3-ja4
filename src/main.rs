@@ -13,8 +13,10 @@ use crate::config::*;
 use crate::tls_fingerprint::cert::*;
 use crate::tls_fingerprint::ech::EchCache;
 use moka::future::Cache;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -79,7 +81,10 @@ async fn main() -> Result<()> {
             http2,
             http1,
             upstream,
-            cache: Arc::new(EchCache { cache }),
+            cache: Arc::new(EchCache {
+                cache,
+                inflight: Arc::new(Mutex::new(HashMap::new())),
+            }),
         },
     };
 

@@ -98,7 +98,7 @@ pub async fn upstream_reconnect(proxydata: ConnectionData) -> Result<SslStream<T
     let remote = match proxy::tcp::upstream_connect(host, proxydata.upstream.clone()).await? {
         proxy::tcp::ConnectionStatus::Success(stream) => stream,
         proxy::tcp::ConnectionStatus::Failure(reason) => {
-            eprintln!("[TCP] Connection failure: {}", reason);
+            crate::log_tag!(warn, "TCP", "Connection failure: {}", reason);
             return Err(anyhow::anyhow!(reason));
         }
     };

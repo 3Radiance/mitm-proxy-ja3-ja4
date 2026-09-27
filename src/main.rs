@@ -1,6 +1,7 @@
 mod config;
 mod h1_fingerprint;
 mod h2_fingerprint;
+mod logging;
 mod proxy;
 mod tls_fingerprint;
 
@@ -38,6 +39,8 @@ pub struct Data {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    logging::init_logging();
+
     let args = Args::parse();
     let path = args
         .config
@@ -80,7 +83,7 @@ async fn main() -> Result<()> {
         },
     };
 
-    println!("[INFO] Loaded config: {:#?}", config);
+    tracing::info!("[CFG] Loaded config: {:#?}", config);
 
     proxy::tcp::connection(data).await?;
     Ok(())

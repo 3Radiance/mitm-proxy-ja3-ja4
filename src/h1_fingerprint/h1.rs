@@ -29,6 +29,7 @@ pub async fn handle_h1(
 
         async move {
             let (parts, body) = req.into_parts();
+            crate::log_tag!(info, "H1", "{} {}", parts.method, parts.uri);
 
             let new_headers = proxydata.http1.apply_http_headers(&parts.headers)?;
 

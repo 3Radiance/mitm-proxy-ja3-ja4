@@ -70,6 +70,22 @@ The current architecture is a foundation for highly advanced fingerprint spoofin
 - Linux (for future `nfqueue` L4 features)
 - Firefox with [Multi-Account Containers](https://addons.mozilla.org/firefox/addon/multi-account-containers/) (highly recommended for leveraging multiple fingerprints simultaneously)
 
+## Logging
+
+The proxy uses `tracing` with per-module filtering via `RUST_LOG`.
+
+Examples:
+
+```bash
+RUST_LOG='H2=error' cargo run --release -- -c profile.json
+RUST_LOG='TCP=debug,H2=error,TLS=warn' cargo run --release -- -c profile.json
+RUST_LOG='CA=info,TLS=warn,H2=error' cargo run --release -- -c profile.json
+```
+
+Supported tags are the same module names used in the code: `TCP`, `HTTP`, `H1`, `H2`, `TLS`, `CA`, `ECH`, `CFG`.
+
+Log lines include a timestamp by default, so debugging sessions are easier to correlate.
+
 ## Installation & Usage
 
 ### 1. Build

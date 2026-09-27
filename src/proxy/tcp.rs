@@ -34,16 +34,16 @@ pub async fn connection(config: ProxyConfig) -> Result<()> {
     let addr = format!("127.0.0.1:{}", config.port);
     let socket = TcpListener::bind(addr).await?;
 
-    println!("[TCP] Listening on {}", config.port);
+    crate::log_tag!(info, "TCP", "Listening on {}", config.port);
     loop {
         let (client, addr) = socket.accept().await?;
 
         let data = config.ctx.clone();
 
-        println!("[TCP] New Connection: {}", addr);
+        crate::log_tag!(info, "TCP", "New connection: {}", addr);
         tokio::spawn(async move {
             if let Err(e) = handle(client, data).await {
-                eprintln!("[TCP] Error: {e}");
+                crate::log_tag!(error, "TCP", "Error: {e}");
             }
         });
     }
@@ -75,7 +75,7 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
     match HttpPacket::check_method(packet.clone(), client).await? {
         ConnectionStatus::Success(stream) => client = stream,
         ConnectionStatus::Failure(reason) => {
-            eprintln!("[HTTP] {}", reason);
+            crate::log_tag!(warn, "HTTP", "{}", reason);
             return Ok(());
         }
     }
@@ -87,10 +87,12 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
         }
     };
 
+    crate::log_tag!(info, "TCP", "Opening upstream connection for host: {}", host);
+
     let remote = match upstream_connect(host, handle.upstream.clone()).await? {
         ConnectionStatus::Success(stream) => stream,
         ConnectionStatus::Failure(reason) => {
-            eprintln!("[TCP] Connection failure: {}", reason);
+            crate::log_tag!(warn, "TCP", "Connection failure: {}", reason);
             let _ = client.write_all(HTTP_502_BAD_GATEWAY).await;
             return Ok(());
         }
@@ -100,6 +102,7 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
     remote.set_nodelay(true)?;
 
     let sni = get_sni_from_packet(packet.clone())?;
+    crate::log_tag!(info, "TLS", "Starting upstream TLS handshake for SNI: {}", sni);
 
     let (remote, selected_alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
         remote,
@@ -114,16 +117,23 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
 
     client.write_all(HTTP_200_OK).await?;
 
+    let alpn_debug = selected_alpn
+        .as_deref()
+        .map(|v| String::from_utf8_lossy(v).into_owned())
+        .unwrap_or_else(|| "<none>".to_string());
+    crate::log_tag!(info, "TLS", "Upstream TLS negotiated for {} with ALPN: {}", sni, alpn_debug);
+
     let acceptor = tls_fingerprint::tls::create_ssl_acceptor(handle.ca, &selected_alpn)?;
 
     let client = tls_fingerprint::tls::handle_tls(client, acceptor).await?;
+    crate::log_tag!(info, "TLS", "Client-side TLS handshake completed for {}", sni);
 
     let proxydata = ConnectionData {
         tls: handle.tls,
         http2: handle.http2,
         http1: handle.http1,
         upstream: handle.upstream,
-        sni: Arc::new(sni),
+        sni: Arc::new(sni.clone()),
         selected_alpn: Arc::new(selected_alpn),
         packet,
         cache: handle.cache,
@@ -131,9 +141,13 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
 
     match proxydata.selected_alpn.as_deref() {
         Some([_, b'h', b'2']) => {
+            crate::log_tag!(info, "H2", "Selected protocol for {}: h2", sni);
             h2_fingerprint::h2::handle_h2(client, remote, proxydata).await?;
         }
-        _ => h1_fingerprint::h1::handle_h1(client, remote, proxydata).await?,
+        _ => {
+            crate::log_tag!(info, "H1", "Selected protocol for {}: h1", sni);
+            h1_fingerprint::h1::handle_h1(client, remote, proxydata).await?;
+        }
     }
 
     Ok(())
@@ -162,6 +176,8 @@ fn get_sni_from_packet(packet: Arc<HttpPacket>) -> Result<String> {
 }
 
 pub async fn upstream_connect_helper(host: &str, upstream: &str) -> Result<ConnectionStatus> {
+    crate::log_tag!(debug, "TCP", "Connecting to upstream proxy {} for host {}", upstream, host);
+
     let mut stream = match TcpStream::connect(upstream).await {
         Ok(s) => s,
         Err(e) => return Ok(ConnectionStatus::Failure(e.to_string())),
@@ -201,11 +217,14 @@ pub async fn upstream_connect_helper(host: &str, upstream: &str) -> Result<Conne
     };
 
     if response_packet.code == 200 {
+        crate::log_tag!(debug, "TCP", "Upstream proxy CONNECT accepted for {} with status {}", host, response_packet.code);
         Ok(ConnectionStatus::Success(stream))
     } else {
-        Ok(ConnectionStatus::Failure(format!(
+        let reason = format!(
             "Proxy returned status {}: {}",
             response_packet.code, response_packet.reason
-        )))
+        );
+        crate::log_tag!(warn, "TCP", "Upstream proxy CONNECT rejected for {}: {}", host, reason);
+        Ok(ConnectionStatus::Failure(reason))
     }
 }

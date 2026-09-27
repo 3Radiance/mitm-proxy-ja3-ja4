@@ -40,7 +40,7 @@ pub async fn set_ech(
         return Ok(());
     }
     if let Some(ech_config) = cache.cache.get(target_domain).await {
-        println!("[ECH] CACHE HIT: {}", target_domain);
+        crate::log_tag!(debug, "ECH", "CACHE HIT: {}", target_domain);
         if let Some(config) = ech_config {
             ssl.set_ech_config_list(&config)?;
         } else if tls.enable_ech_grease {

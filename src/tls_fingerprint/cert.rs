@@ -29,10 +29,10 @@ impl MitmCa {
 
             let cert = CertificateParams::from_ca_cert_pem(&cert_pem)?.self_signed(&keypair)?;
 
-            println!("[CA] Loaded existing MITM CA from disk");
+            crate::log_tag!(info, "CA", "Loaded existing MITM CA from disk");
             (cert, keypair)
         } else {
-            println!("[CA] CA files not found, generating new MITM CA...");
+            crate::log_tag!(info, "CA", "CA files not found, generating new MITM CA...");
             let keypair = KeyPair::generate()?;
             let cert = Self::build_ca_certificate(&keypair)?;
 
@@ -82,7 +82,7 @@ impl MitmCa {
         let cert_pair = self
             .cache
             .try_get_with(domain.to_string(), || {
-                println!("[CA] Issuing cert for {}", domain);
+                crate::log_tag!(debug, "CA", "Issuing cert for {}", domain);
                 let (cert_pem, key_pem) = self.issue_cert_for_domain(domain)?;
 
                 let x509 = btls::x509::X509::from_pem(cert_pem.as_bytes())?;

@@ -67,6 +67,12 @@ pub async fn create_ssl_acceptor_upstream(
         wire
     });
 
+    let alpn_debug = alpn
+        .as_deref()
+        .map(|v| String::from_utf8_lossy(v).into_owned())
+        .unwrap_or_else(|| "<none>".to_string());
+    crate::log_tag!(info, "TLS", "Upstream TLS handshake completed for {} with ALPN: {}", target_host, alpn_debug);
+
     Ok((s, alpn))
 }
 
@@ -75,7 +81,7 @@ pub async fn handle_tls(client: TcpStream, acceptor: SslAcceptor) -> Result<SslS
     let mut tls_stream = SslStream::new(ssl, client)?;
 
     if let Err(e) = Pin::new(&mut tls_stream).accept().await {
-        eprintln!("[TLS] Handshake Failed: {}", e);
+        crate::log_tag!(error, "TLS", "Handshake failed: {}", e);
         return Err(e.into());
     }
 

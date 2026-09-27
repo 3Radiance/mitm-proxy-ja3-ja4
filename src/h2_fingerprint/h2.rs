@@ -31,16 +31,18 @@ pub async fn handle_h2(
     proxydata: ConnectionData,
 ) -> Result<()> {
     let mut server_conn = http2::server::handshake(client).await?;
+    crate::log_tag!(info, "H2", "Incoming client HTTP/2 connection established");
 
     let upstream_builder = build_upstream_h2_builder(proxydata.http2.clone()).await?;
 
     let (upstream_send, upstream_conn) = upstream_builder.handshake::<_, Bytes>(remote).await?;
+    crate::log_tag!(info, "H2", "Upstream HTTP/2 connection established");
 
     let upstream_send = Arc::new(Mutex::new(upstream_send));
 
     tokio::spawn(async move {
         if let Err(err) = upstream_conn.await {
-            eprintln!("[H2] Upstream h2 connection error: {err}");
+            crate::log_tag!(error, "H2", "Upstream h2 connection error: {err}");
         }
     });
 
@@ -52,7 +54,7 @@ pub async fn handle_h2(
 
         tokio::spawn(async move {
             if let Err(err) = handle_request(request, respond, upstream_send, proxydata).await {
-                eprintln!("[H2] request handling failed: {err:?}");
+                crate::log_tag!(error, "H2", "Request handling failed: {err:?}");
             }
         });
     }

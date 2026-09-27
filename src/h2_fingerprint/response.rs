@@ -18,7 +18,7 @@ pub async fn forward_response(
         Ok(stream) => stream,
 
         Err(err) => {
-            eprintln!("[H2] send_response failed: {err:?}");
+            crate::log_tag!(error, "H2", "Send response failed: {err:?}");
             return Ok(());
         }
     };
@@ -31,7 +31,7 @@ pub async fn forward_response(
                 Ok(chunk) => chunk,
 
                 Err(err) => {
-                    eprintln!("[H2] upstream body failed: {err:?}");
+                    crate::log_tag!(error, "H2", "Upstream body failed: {err:?}");
                     return Ok(());
                 }
             };
@@ -41,13 +41,13 @@ pub async fn forward_response(
 
             if len > 0 || is_eos {
                 if let Err(err) = send_stream.send_data(chunk, is_eos) {
-                    eprintln!("[H2] downstream send_data FAILED: {err:?}");
+                    crate::log_tag!(error, "H2", "Downstream send_data failed: {err:?}");
                     return Ok(());
                 }
 
                 if len > 0 {
                     if let Err(err) = flow.release_capacity(len) {
-                        eprintln!("[H2] release_capacity failed: {err:?}");
+                        crate::log_tag!(error, "H2", "Release capacity failed: {err:?}");
                         return Ok(());
                     }
                 }

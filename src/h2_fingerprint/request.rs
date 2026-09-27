@@ -20,7 +20,7 @@ pub async fn handle_request(
     let method = request.method().clone();
     let uri = request.uri().clone();
 
-    println!("[H2] {} {}", method, uri);
+    crate::log_tag!(info, "H2", "{} {}", method, uri);
 
     let (req_parts, mut req_body) = request.into_parts();
 
@@ -31,7 +31,7 @@ pub async fn handle_request(
     let headers = match proxydata.http2.apply_http_headers(&req_parts.headers) {
         Ok(headers) => headers,
         Err(err) => {
-            eprintln!("[H2] apply http headers failed: {err}");
+            crate::log_tag!(warn, "H2", "Apply HTTP headers failed: {err}");
             return Ok(());
         }
     };
@@ -47,7 +47,7 @@ pub async fn handle_request(
     let upstream_req = match upstream_req.body(()) {
         Ok(req) => req,
         Err(err) => {
-            eprintln!("[H2] request build failed: {err}");
+            crate::log_tag!(warn, "H2", "Request build failed: {err}");
             return Ok(());
         }
     };
@@ -64,7 +64,7 @@ pub async fn handle_request(
             let new_builder = match build_upstream_h2_builder(proxydata.http2.clone()).await {
                 Ok(b) => b,
                 Err(err) => {
-                    eprintln!("[H2] reconnect builder failed: {err:?}");
+                    crate::log_tag!(warn, "H2", "Reconnect builder failed: {err:?}");
                     return Ok(());
                 }
             };
@@ -72,7 +72,7 @@ pub async fn handle_request(
             let new_remote = match upstream_reconnect(proxydata.clone()).await {
                 Ok(r) => r,
                 Err(err) => {
-                    eprintln!("[H2] upstream reconnect failed: {err:?}");
+                    crate::log_tag!(warn, "H2", "Upstream reconnect failed: {err:?}");
                     respond.send_reset(http2::frame::Reason::REFUSED_STREAM);
                     return Ok(());
                 }
@@ -81,14 +81,14 @@ pub async fn handle_request(
             let (new_send, new_conn) = match new_builder.handshake::<_, Bytes>(new_remote).await {
                 Ok(v) => v,
                 Err(err) => {
-                    eprintln!("[H2] reconnect handshake failed: {err:?}");
+                    crate::log_tag!(error, "H2", "Reconnect handshake failed: {err:?}");
                     return Ok(());
                 }
             };
 
             tokio::spawn(async move {
                 if let Err(err) = new_conn.await {
-                    eprintln!("[H2] Upstream h2 connection error: {err}");
+                    crate::log_tag!(error, "H2", "Upstream h2 connection error: {err}");
                 }
             });
 
@@ -103,7 +103,7 @@ pub async fn handle_request(
         match send_handle.send_request(upstream_req, end_stream_on_headers) {
             Ok(v) => v,
             Err(err) => {
-                eprintln!("[H2] send_request failed: {err:?}");
+                crate::log_tag!(error, "H2", "Send request failed: {err:?}");
                 return Ok(());
             }
         };
@@ -119,7 +119,7 @@ pub async fn handle_request(
     let response = match upstream_resp.await {
         Ok(response) => response,
         Err(err) => {
-            eprintln!("[H2] response failed: {err:?}");
+            crate::log_tag!(error, "H2", "Response failed: {err:?}");
             return Ok(());
         }
     };

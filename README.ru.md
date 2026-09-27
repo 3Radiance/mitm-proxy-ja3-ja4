@@ -70,6 +70,22 @@ HTTP MITM-прокси на Rust, `tokio` и `btls`.
 - Linux (для будущих L4-функций на `nfqueue`)
 - Firefox с расширением [Multi-Account Containers](https://addons.mozilla.org/firefox/addon/multi-account-containers/) (настоятельно рекомендуется для одновременного использования нескольких отпечатков)
 
+## Логирование
+
+Прокси использует `tracing` с фильтрацией по модулям через `RUST_LOG`.
+
+Примеры:
+
+```bash
+RUST_LOG='H2=error' cargo run --release -- -c profile.json
+RUST_LOG='TCP=debug,H2=error,TLS=warn' cargo run --release -- -c profile.json
+RUST_LOG='CA=info,TLS=warn,H2=error' cargo run --release -- -c profile.json
+```
+
+Поддерживаемые теги совпадают с именами модулей в коде: `TCP`, `HTTP`, `H1`, `H2`, `TLS`, `CA`, `ECH`, `CFG`.
+
+Логи по умолчанию содержат таймстамп, чтобы проще было сопоставлять события между собой.
+
 ## Установка и запуск
 
 ### 1. Сборка

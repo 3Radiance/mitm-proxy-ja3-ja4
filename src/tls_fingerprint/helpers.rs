@@ -30,7 +30,7 @@ pub fn set_select_certificate_callback(ca: Arc<MitmCa>, builder: &mut SslContext
                 Ok(())
             }
             Err(e) => {
-                eprintln!("[TLS] Failed to issue cert for {}: {}", domain, e);
+                crate::log_tag!(error, "TLS", "Failed to issue cert for {}: {}", domain, e);
                 Err(SelectCertError::ERROR)
             }
         }
@@ -184,7 +184,7 @@ pub fn set_alps(ssl: &mut Ssl, http2: Arc<Http2Config>, tls: Arc<TlsConfig>) {
             );
 
             if res != 1 {
-                eprintln!("[TLS] Warning: Failed to set ALPS settings payload");
+                crate::log_tag!(warn, "TLS", "Failed to set ALPS settings payload");
             }
         }
     }

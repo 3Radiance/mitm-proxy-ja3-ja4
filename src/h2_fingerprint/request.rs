@@ -1,8 +1,8 @@
-use anyhow::Result;
 use crate::h2_fingerprint::h2::ConnectionData;
 use crate::h2_fingerprint::request_body::*;
 use crate::h2_fingerprint::response::*;
 use crate::h2_fingerprint::upstream::*;
+use anyhow::Result;
 
 use bytes::Bytes;
 use http::Request;
@@ -73,6 +73,7 @@ pub async fn handle_request(
                 Ok(r) => r,
                 Err(err) => {
                     eprintln!("[H2] upstream reconnect failed: {err:?}");
+                    respond.send_reset(http2::frame::Reason::REFUSED_STREAM);
                     return Ok(());
                 }
             };

@@ -18,7 +18,7 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 ## Features (Current Implementation)
 
-* **MITM (Man-in-the-Middle)** — Transparent HTTPS interception. It uses `rcgen` to dynamically issue and sign certificates on-the-fly, caching them via `dashmap` for performance.
+* **MITM (Man-in-the-Middle)** — Transparent HTTPS interception. It uses `rcgen` to dynamically issue and sign certificates on-the-fly, caching them via `moka` for performance.
 
 * **BoringSSL Integration** — Uses `btls` and `tokio-btls` for TLS handshake handling and MITM interception.
 

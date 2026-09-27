@@ -1,8 +1,8 @@
 use anyhow::Result;
 use btls::ssl::ExtensionType;
+use http2::frame::PseudoId;
+use http2::frame::SettingId;
 use http2::frame::{Priority, StreamDependency};
-use http2::frame::{PseudoId};
-use http2::frame::{SettingId};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -63,8 +63,10 @@ pub struct TlsConfig {
     pub session_ticket: bool,
     pub grease_enabled: bool,
     pub enable_ech: bool,
+    pub enable_ech_grease: bool,
     #[serde(default)]
     pub record_size_limit: Option<u16>,
+    pub doh: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -275,7 +277,9 @@ impl Http2Config {
                 match configured_val {
                     Some(Some(value)) => {
                         let value = HeaderValue::from_str(value).map_err(|err| {
-                            anyhow::anyhow!("[H2] invalid value for header '{configured_name}': {err}")
+                            anyhow::anyhow!(
+                                "[H2] invalid value for header '{configured_name}': {err}"
+                            )
                         })?;
                         result.push((name, value));
                     }
@@ -434,7 +438,9 @@ impl Http1Config {
 
                 if let Some(value) = configured_value {
                     let value = HeaderValue::from_str(value).map_err(|err| {
-                        anyhow::anyhow!("[HTTP/1.1] invalid value for header '{configured_name}': {err}")
+                        anyhow::anyhow!(
+                            "[HTTP/1.1] invalid value for header '{configured_name}': {err}"
+                        )
                     })?;
                     result.push((configured_name.clone(), value));
                 }

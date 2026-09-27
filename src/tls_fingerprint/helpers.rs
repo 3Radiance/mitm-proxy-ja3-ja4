@@ -1,9 +1,13 @@
-use anyhow::Result;
 use crate::config::*;
 use crate::tls_fingerprint::cert::MitmCa;
 use crate::tls_fingerprint::compression::{BrotliCompressor, ZlibCompressor, ZstdCompressor};
+use anyhow::Result;
 
-use btls::ssl::{AlpnError, ClientHello, NameType, SelectCertError, SslContextBuilder, SslOptions};
+use btls::ssl::{
+    AlpnError, ClientHello, NameType, SelectCertError, Ssl, SslContextBuilder, SslOptions,
+};
+use btls_sys::SSL_add_application_settings;
+use foreign_types_shared::ForeignType;
 
 use std::sync::Arc;
 
@@ -126,7 +130,9 @@ pub fn set_cert_compression(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>
                 .add_certificate_compression_algorithm(ZstdCompressor)
                 .map_err(|e| anyhow::anyhow!("[TLS] Failed to add zstd compression: {e}"))?,
             other => {
-                return Err(anyhow::anyhow!("[TLS] Unknown cert compression algorithm: {other}"));
+                return Err(anyhow::anyhow!(
+                    "[TLS] Unknown cert compression algorithm: {other}"
+                ));
             }
         }
     }
@@ -158,5 +164,28 @@ pub fn set_session_ticket(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) 
         builder.clear_options(SslOptions::NO_TICKET);
     } else {
         builder.set_options(SslOptions::NO_TICKET);
+    }
+}
+
+pub fn set_alps(ssl: &mut Ssl, http2: Arc<Http2Config>, tls: Arc<TlsConfig>) {
+    if tls.alps {
+        ssl.set_alps_use_new_codepoint(true);
+
+        let alps_payload = http2.encode_alps_payload();
+        let proto = b"h2";
+
+        unsafe {
+            let res = SSL_add_application_settings(
+                ssl.as_ptr() as *mut _,
+                proto.as_ptr(),
+                proto.len(),
+                alps_payload.as_ptr(),
+                alps_payload.len(),
+            );
+
+            if res != 1 {
+                eprintln!("[TLS] Warning: Failed to set ALPS settings payload");
+            }
+        }
     }
 }

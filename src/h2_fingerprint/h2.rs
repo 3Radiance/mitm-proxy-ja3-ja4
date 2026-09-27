@@ -1,7 +1,8 @@
-use anyhow::Result;
 use crate::config::*;
 use crate::h2_fingerprint::upstream::*;
 use crate::proxy::http::HttpPacket;
+use crate::tls_fingerprint::ech::EchCache;
+use anyhow::Result;
 
 use std::sync::Arc;
 
@@ -21,6 +22,7 @@ pub struct ConnectionData {
     pub sni: Arc<String>,
     pub selected_alpn: Arc<Option<Vec<u8>>>,
     pub packet: Arc<HttpPacket>,
+    pub cache: Arc<EchCache>,
 }
 
 pub async fn handle_h2(

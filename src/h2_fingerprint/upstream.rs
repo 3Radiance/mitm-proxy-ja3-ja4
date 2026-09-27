@@ -1,8 +1,8 @@
-use anyhow::Result;
 use crate::config::*;
 use crate::h2_fingerprint::h2::ConnectionData;
 use crate::proxy;
 use crate::tls_fingerprint;
+use anyhow::Result;
 use http2::frame::{Priorities, PseudoOrder, SettingsOrder};
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -41,7 +41,7 @@ pub async fn build_upstream_h2_builder(config: Arc<Http2Config>) -> Result<http2
         builder.headers_stream_dependency(dependency);
     }
 
-    builder.initial_connection_window_size(config.connection_window_update + 65535);
+    builder.initial_connection_window_size(config.connection_window_update);
 
     let initial_id = if let Some(explicit) = config.initial_stream_id {
         explicit
@@ -88,24 +88,45 @@ pub fn set_settings_frame(
 }
 
 pub async fn upstream_reconnect(proxydata: ConnectionData) -> Result<SslStream<TcpStream>> {
-    let remote =
-        match proxy::tcp::upstream_connect(proxydata.packet.clone(), proxydata.upstream).await? {
-            proxy::tcp::ConnectionStatus::Success(stream) => stream,
-            proxy::tcp::ConnectionStatus::Failure(reason) => {
-                eprintln!("[TCP] Connection failure: {}", reason);
-                return Err(anyhow::anyhow!(reason));
-            }
-        };
+    let host = match proxydata.packet.get_header("host") {
+        Some(h) => h,
+        None => {
+            return Err(anyhow::anyhow!("Host header not found".to_string(),));
+        }
+    };
+
+    let remote = match proxy::tcp::upstream_connect(host, proxydata.upstream.clone()).await? {
+        proxy::tcp::ConnectionStatus::Success(stream) => stream,
+        proxy::tcp::ConnectionStatus::Failure(reason) => {
+            eprintln!("[TCP] Connection failure: {}", reason);
+            return Err(anyhow::anyhow!(reason));
+        }
+    };
 
     remote.set_nodelay(true)?;
 
-    let (remote, _alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
+    let (remote, alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
         remote,
         &proxydata.sni,
         proxydata.tls,
         proxydata.http2,
+        true,
+        proxydata.upstream,
+        proxydata.cache,
     )
     .await?;
+
+    if let Some(selected_alpn) = &*proxydata.selected_alpn {
+        if let Some(alpn) = alpn {
+            if selected_alpn != &alpn {
+                return Err(anyhow::anyhow!(
+                    "ALPN mismatch on reconnect: expected {:?}, got {:?}",
+                    selected_alpn,
+                    alpn
+                ));
+            }
+        }
+    }
 
     Ok(remote)
 }

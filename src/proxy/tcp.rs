@@ -80,7 +80,14 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
         }
     }
 
-    let remote = match upstream_connect(packet.clone(), handle.upstream.clone()).await? {
+    let host = match packet.get_header("host") {
+        Some(h) => h,
+        None => {
+            return Err(anyhow::anyhow!("Host header not found".to_string(),));
+        }
+    };
+
+    let remote = match upstream_connect(host, handle.upstream.clone()).await? {
         ConnectionStatus::Success(stream) => stream,
         ConnectionStatus::Failure(reason) => {
             eprintln!("[TCP] Connection failure: {}", reason);
@@ -99,6 +106,9 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
         &sni,
         handle.tls.clone(),
         handle.http2.clone(),
+        true,
+        handle.upstream.clone(),
+        handle.cache.clone(),
     )
     .await?;
 
@@ -116,6 +126,7 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
         sni: Arc::new(sni),
         selected_alpn: Arc::new(selected_alpn),
         packet,
+        cache: handle.cache,
     };
 
     match proxydata.selected_alpn.as_deref() {
@@ -129,18 +140,9 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
 }
 
 pub async fn upstream_connect(
-    packet: Arc<HttpPacket>,
+    host: &str,
     upstream: Arc<Option<String>>,
 ) -> Result<ConnectionStatus> {
-    let host = match packet.get_header("host") {
-        Some(h) => h,
-        None => {
-            return Ok(ConnectionStatus::Failure(
-                "Host header not found".to_string(),
-            ));
-        }
-    };
-
     match &*upstream {
         Some(proxy_addr) => upstream_connect_helper(host, proxy_addr).await,
         None => match TcpStream::connect(&host).await {

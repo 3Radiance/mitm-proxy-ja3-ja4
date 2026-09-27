@@ -1,7 +1,8 @@
-use anyhow::Result;
 use crate::config::*;
 use crate::tls_fingerprint::cert::MitmCa;
+use crate::tls_fingerprint::ech::{set_ech, EchCache};
 use crate::tls_fingerprint::helpers::*;
+use anyhow::Result;
 
 use btls::ssl::{Ssl, SslAcceptor, SslConnector, SslMethod};
 use std::pin::Pin;
@@ -9,13 +10,7 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_btls::SslStream;
 
-use btls_sys::SSL_add_application_settings;
-use foreign_types_shared::ForeignType;
-
-pub fn create_ssl_acceptor(
-    ca: Arc<MitmCa>,
-    alpn: &Option<Vec<u8>>,
-) -> Result<SslAcceptor> {
+pub fn create_ssl_acceptor(ca: Arc<MitmCa>, alpn: &Option<Vec<u8>>) -> Result<SslAcceptor> {
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
 
     if let Some(alpn) = alpn {
@@ -28,10 +23,13 @@ pub fn create_ssl_acceptor(
 }
 
 pub async fn create_ssl_acceptor_upstream(
-    upstream: TcpStream,
+    client: TcpStream,
     target_host: &str,
     tls: Arc<TlsConfig>,
     http2: Arc<Http2Config>,
+    need_ech: bool,
+    upstream: Arc<Option<String>>,
+    cache: Arc<EchCache>,
 ) -> Result<(SslStream<TcpStream>, Option<Vec<u8>>)> {
     let mut builder = SslConnector::builder(SslMethod::tls())?;
     builder.set_default_verify_paths()?;
@@ -53,28 +51,12 @@ pub async fn create_ssl_acceptor_upstream(
 
     let mut ssl = connector.configure()?.into_ssl(target_host)?;
 
-    if tls.alps {
-        ssl.set_alps_use_new_codepoint(true);
-
-        let alps_payload = http2.encode_alps_payload();
-        let proto = b"h2";
-
-        unsafe {
-            let res = SSL_add_application_settings(
-                ssl.as_ptr() as *mut _,
-                proto.as_ptr(),
-                proto.len(),
-                alps_payload.as_ptr(),
-                alps_payload.len(),
-            );
-
-            if res != 1 {
-                eprintln!("[TLS] Warning: Failed to set ALPS settings payload");
-            }
-        }
+    set_alps(&mut ssl, http2.clone(), tls.clone());
+    if need_ech {
+        set_ech(&mut ssl, tls.clone(), http2, target_host, upstream, cache).await?;
     }
 
-    let mut s = SslStream::new(ssl, upstream)?;
+    let mut s = SslStream::new(ssl, client)?;
 
     Pin::new(&mut s).connect().await?;
 
@@ -88,10 +70,7 @@ pub async fn create_ssl_acceptor_upstream(
     Ok((s, alpn))
 }
 
-pub async fn handle_tls(
-    client: TcpStream,
-    acceptor: SslAcceptor,
-) -> Result<SslStream<TcpStream>> {
+pub async fn handle_tls(client: TcpStream, acceptor: SslAcceptor) -> Result<SslStream<TcpStream>> {
     let ssl = Ssl::new(acceptor.context())?;
     let mut tls_stream = SslStream::new(ssl, client)?;
 

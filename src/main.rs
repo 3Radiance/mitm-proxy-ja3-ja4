@@ -10,7 +10,10 @@ use std::path::PathBuf;
 
 use crate::config::*;
 use crate::tls_fingerprint::cert::*;
+use crate::tls_fingerprint::ech::EchCache;
+use moka::future::Cache;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -30,6 +33,7 @@ pub struct Data {
     pub http2: Arc<Http2Config>,
     pub http1: Arc<Http1Config>,
     pub upstream: Arc<Option<String>>,
+    pub cache: Arc<EchCache>,
 }
 
 #[tokio::main]
@@ -59,6 +63,10 @@ async fn main() -> Result<()> {
     let http1 = Arc::new(config.http1.clone());
     let upstream = Arc::new(config.config.upstream_proxy.clone());
     let port = config.config.port;
+    let cache: Cache<String, Option<Vec<u8>>> = Cache::builder()
+        .max_capacity(10_000)
+        .time_to_live(Duration::from_secs(3600))
+        .build();
 
     let data = ProxyConfig {
         port,
@@ -68,6 +76,7 @@ async fn main() -> Result<()> {
             http2,
             http1,
             upstream,
+            cache: Arc::new(EchCache { cache }),
         },
     };
 

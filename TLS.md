@@ -170,3 +170,54 @@ Indication) is not user-toggleable and doesn't need to be — BoringSSL always
 sends it as a baseline security measure, the same way every modern browser
 does. It only needs a position in `extensions_order`; there's nothing to
 enable or disable.
+
+## Encrypted Client Hello (ECH)
+
+ECH is controlled by two **independent** booleans in `TlsConfig`:
+
+- **`enable_ech`** — turns ECH resolution on at all. When `true`, the proxy
+  looks up a real ECH config for the upstream host and, if one is found,
+  encrypts the inner ClientHello with it (`SSL_set1_ech_config_list` under
+  the hood). When `false`, no lookup happens — the proxy goes straight to
+  the `enable_ech_grease` check below.
+- **`enable_ech_grease`** — controls whether ECH GREASE is sent as a
+  fallback whenever a real config isn't used. This applies in **two**
+  cases: when `enable_ech` is `false` (no lookup attempted at all), and
+  when `enable_ech` is `true` but no config was found for that particular
+  host. In both cases, if `enable_ech_grease` is `true`, the proxy sends a
+  GREASE ECH extension (`SSL_set_enable_ech_grease`) instead — matching
+  real browsers, which send this extension on every handshake regardless
+  of whether the destination actually supports ECH.
+
+This gives four real combinations, matching different browser behaviors:
+
+| `enable_ech` | `enable_ech_grease` | Behavior |
+|---|---|---|
+| `false` | `false` | No ECH extension at all. |
+| `false` | `true` | Always GREASE — never look up a real config. |
+| `true` | `false` | Real ECH when a config exists; nothing when it doesn't. |
+| `true` | `true` | Real ECH when a config exists; GREASE when it doesn't — matches real Chrome/Firefox behavior on the open web, where most hosts don't publish a config yet. |
+
+### How the real config is resolved
+
+When `enable_ech` is `true`, the config is looked up live via DoH:
+
+1. Pick a random resolver from `doh` (a list of hostnames, e.g.
+   `["dns.google"]`), so repeated lookups aren't all sent to the same
+   resolver.
+2. Query it for the target host's **HTTPS (SVCB) record** and read the
+   `ech` (`SvcParamKey::EchConfigList`) parameter out of the answer, if
+   present.
+3. **The DoH request itself goes through the proxy's own fingerprinting
+   stack** — it's a full TLS + HTTP/2 connection built with
+   `create_ssl_acceptor_upstream`, using the same `TlsConfig` /
+   `Http2Config` profile as regular traffic. It does **not** attempt ECH
+   resolution for itself (that would recurse), but otherwise looks like
+   any other upstream connection the proxy makes.
+4. **If `upstream_proxy` is set, the DoH request is routed through it too**
+   — there is no separate direct-to-internet path for DNS resolution, so
+   ECH lookups can't leak the destination host to anyone monitoring the
+   machine's network traffic outside of the configured proxy.
+5. The result (the config bytes, or the fact that none was found) is
+   cached per-domain for one hour (`moka`, up to 10,000 entries), so
+   repeat visits to the same host don't re-query DoH every time.

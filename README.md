@@ -6,7 +6,7 @@ An HTTP MITM proxy built with Rust, `tokio`, and `btls`.
 
 > **Currently in MVP (Minimum Viable Product) stage.**
 
-This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, extension permutation/ordering, OCSP stapling, Certificate Transparency (SCT), session tickets, and ALPS are all driven by a JSON profile. **Encrypted Client Hello (ECH) is intentionally not implemented yet** — it's on the roadmap. HTTP/2 fingerprinting (Akamai) is now fully configurable as well. TCP (L4) fingerprinting is the next layer to be built.
+This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, extension permutation/ordering, OCSP stapling, Certificate Transparency (SCT), session tickets, ALPS, and Encrypted Client Hello (ECH, resolved live via DoH, with GREASE fallback) are all driven by a JSON profile. HTTP/2 fingerprinting (Akamai) and HTTP/1.1 header ordering/rewriting are also fully configurable. TCP (L4) fingerprinting is the next layer to be built.
 
 ### TLS Fingerprint Spoofing Configuration
 
@@ -22,7 +22,7 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 * **BoringSSL Integration** — Uses `btls` and `tokio-btls` for TLS handshake handling and MITM interception.
 
-* **TLS Fingerprint Spoofing (JA3/JA4) — complete except ECH.** The upstream TLS connection is built entirely from a JSON profile passed via `-c` / `--config <path>` (see `example.json` for the format):
+* **TLS Fingerprint Spoofing (JA3/JA4) — complete.** The upstream TLS connection is built entirely from a JSON profile passed via `-c` / `--config <path>` (see `example.json` for the format):
 
   * Cipher suites, in strict caller-defined order.
   * Elliptic curves.
@@ -32,7 +32,8 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
   * Certificate compression (`brotli`, `zlib`, `zstd`) with real decompression support.
   * GREASE.
   * Exact TLS extension ordering in the ClientHello, or Chrome-style random permutation.
-  * OCSP stapling, Certificate Transparency (SCT), session ticket, and ALPS (Application-Layer Protocol Settings) toggles — see `TLS.md` for details.
+  * OCSP stapling, Certificate Transparency (SCT), session ticket, and ALPS (Application-Layer Protocol Settings) toggles.
+  * Encrypted Client Hello (ECH) — the real ECH config is resolved live over DoH (HTTPS/SVCB record lookup) for each upstream host, using the same TLS/HTTP2 fingerprint profile for the DoH request itself; falls back to ECH GREASE (or nothing) when no config is found, independently configurable — see `TLS.md` for details.
 
 * **Upstream-First ALPN Negotiation** — The proxy establishes and negotiates TLS with the upstream server before completing the browser-side TLS handshake. The ALPN selected by the upstream server is then used to configure the client-side TLS acceptor, preventing the browser from selecting a protocol that the upstream connection does not support.
 
@@ -49,6 +50,8 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
   * Streaming request and response body forwarding without buffering the complete body.
   * HTTP/2 trailers support.
 
+* **HTTP/1.1 Header Spoofing** — Configurable header order and content for plain HTTP/1.1 upstream connections (when ALPN doesn't negotiate `h2`), mirroring the same override/removal semantics used for HTTP/2.
+
 * **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method.
 
 * **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
@@ -56,10 +59,6 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 ### Roadmap & Future Plans
 
 The current architecture is a foundation for highly advanced fingerprint spoofing:
-
-* **Encrypted Client Hello (ECH)**
-
-  Not implemented yet — deferred until the rest of the fingerprinting stack is in place.
 
 * **L4 TCP Fingerprinting (NFQueue)**
 
@@ -113,7 +112,7 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 
 ### Configuration
 
-* `src/config.rs`: JSON configuration model and parsers for all fingerprinting layers. Handles TLS settings, HTTP/2 SETTINGS, stream priorities, header ordering, HTTP header overrides, pseudo-header ordering, and other profile-specific options.
+* `src/config.rs`: JSON configuration model and parsers for all fingerprinting layers. Handles TLS settings, ECH/DoH options, HTTP/2 SETTINGS, stream priorities, header ordering, HTTP header overrides, pseudo-header ordering, and other profile-specific options.
 
 ### Proxy Layer
 
@@ -123,13 +122,15 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 
 ### TLS Fingerprinting
 
-* `src/tls_fingerprint/cert.rs`: On-the-fly certificate generation using `rcgen` and `btls::x509`, signed by the local CA and cached in a `DashMap`.
+* `src/tls_fingerprint/cert.rs`: On-the-fly certificate generation using `rcgen` and `btls::x509`, signed by the local CA and cached in a `moka` cache.
 
 * `src/tls_fingerprint/tls.rs`: `btls` / `tokio-btls` TLS acceptor and connector configuration, upstream TLS negotiation, client-side TLS handshake handling, and ALPN negotiation.
 
 * `src/tls_fingerprint/helpers.rs`: Individual TLS fingerprint configuration helpers for cipher suites, curves, signature algorithms, ALPN, extension order/permutation, record size limit, certificate compression, GREASE, OCSP stapling, SCT, session tickets, and ALPS.
 
 * `src/tls_fingerprint/compression.rs`: Certificate compression implementations for Brotli, zlib, and zstd.
+
+* `src/tls_fingerprint/ech.rs`: Live ECH config resolution over DoH (HTTPS/SVCB record lookup, reusing the configured TLS/HTTP2 fingerprint for the DoH request itself), with GREASE fallback when no config is published for a host.
 
 ### HTTP/2 Fingerprinting
 
@@ -142,6 +143,10 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 * `src/h2_fingerprint/response.rs`: HTTP/2 response forwarding, response body streaming, flow-control handling, `END_STREAM` handling, and response trailers.
 
 * `src/h2_fingerprint/upstream.rs`: Creation and configuration of the upstream HTTP/2 client connection according to the active fingerprint profile.
+
+### HTTP/1.1 Fingerprinting
+
+* `src/h1_fingerprint/h1.rs`: HTTP/1.1 upstream request handling (used when ALPN doesn't negotiate `h2`), including configurable header order and content, built on `hyper`.
 
 ### Module Structure
 
@@ -161,19 +166,24 @@ src/
 │   ├── mod.rs
 │   ├── cert.rs
 │   ├── compression.rs
+│   ├── ech.rs
 │   ├── helpers.rs
 │   └── tls.rs
 │
-└── h2_fingerprint/
+├── h2_fingerprint/
+│   ├── mod.rs
+│   ├── h2.rs
+│   ├── request.rs
+│   ├── request_body.rs
+│   ├── response.rs
+│   └── upstream.rs
+│
+└── h1_fingerprint/
     ├── mod.rs
-    ├── h2.rs
-    ├── request.rs
-    ├── request_body.rs
-    ├── response.rs
-    └── upstream.rs
+    └── h1.rs
 ```
 
-The `proxy` layer handles raw TCP and HTTP `CONNECT` traffic, the `tls_fingerprint` layer handles TLS interception and TLS fingerprinting, and the `h2_fingerprint` layer handles HTTP/2 fingerprinting and stream-level traffic. This separation keeps transport, TLS, and HTTP/2 fingerprinting logic independent while allowing the layers to work together during a single proxied connection.
+The `proxy` layer handles raw TCP and HTTP `CONNECT` traffic, the `tls_fingerprint` layer handles TLS interception, TLS fingerprinting, and ECH resolution, the `h2_fingerprint` layer handles HTTP/2 fingerprinting and stream-level traffic, and the `h1_fingerprint` layer handles HTTP/1.1 header fingerprinting for upstream connections that don't negotiate `h2`. This separation keeps transport, TLS, and per-protocol fingerprinting logic independent while allowing the layers to work together during a single proxied connection.
 
 ## License
 

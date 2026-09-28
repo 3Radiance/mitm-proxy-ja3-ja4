@@ -54,6 +54,8 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 * **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method.
 
+* **Per-Domain Profile Routing** — Pass `-d` / `--domain <path>` with a map of domain patterns to partial profile overlays (see `domain.json`). Each connection is matched by SNI (exact → `*.root` → `*.label.*` → `label.*` → base profile) and served with its own TLS/HTTP2/HTTP1/upstream settings, prebuilt once at startup. Only the fields that differ from the base profile need to be specified; everything else is inherited.
+
 * **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
 
 ### Roadmap & Future Plans
@@ -122,6 +124,28 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 - `ca.crt` — Root CA certificate. You must import this into Firefox/your browser and trust it to identify websites.
 - `ca.key` — Private key for the CA.
 
+### 3. Per-domain overrides (optional)
+
+```bash
+cargo run --release -- -c profile.json -d domain.json
+```
+
+`domain.json` maps domain patterns to partial overlays — only the fields that differ from the base profile:
+
+```json
+{
+  "browserleaks.com": {
+    "config": { "upstream_proxy": null },
+    "tls": { "enable_ech": false }
+  },
+  "*.google.com": {
+    "tls": { "enable_ech": true }
+  }
+}
+```
+
+Match order per connection (by SNI, case-insensitive): exact → `*.root` → `*.label.*` → `label.*` → base profile. A missing key (or `null` anywhere except `upstream_proxy`) means "inherit from base", while `"upstream_proxy": null` explicitly forces a direct connection for that domain.
+
 ## Architecture Highlights
 
 * `src/main.rs`: CLI entrypoint using `clap` for parsing `-c` / `--config <path>`. The JSON configuration contains the proxy port, upstream proxy, CA paths, TLS fingerprint profiles, and HTTP/2 fingerprint profiles.
@@ -130,9 +154,11 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 
 * `src/config.rs`: JSON configuration model and parsers for all fingerprinting layers. Handles TLS settings, ECH/DoH options, HTTP/2 SETTINGS, stream priorities, header ordering, HTTP header overrides, pseudo-header ordering, and other profile-specific options.
 
+* `src/domain.rs`: Per-domain profile overlays (`-d` / `--domain`). Partial overrides are deep-merged over the base profile once at startup; per-connection lookup is a cheap `Arc` clone with no re-allocation.
+
 ### Proxy Layer
 
-* `src/proxy/tcp.rs`: TCP connection handling, initial HTTP `CONNECT` parsing, upstream TCP connection establishment, SNI extraction, upstream TLS negotiation, and bridging the resulting TLS connection to the client.
+* `src/proxy/tcp.rs`: TCP connection handling, initial HTTP `CONNECT` parsing, upstream TCP connection establishment, SNI extraction, per-domain profile routing (SNI match with fallback to the base profile), upstream TLS negotiation, and bridging the resulting TLS connection to the client.
 
 * `src/proxy/http.rs`: Minimal HTTP/1.x request/response parsing using `httparse`, including `CONNECT` method validation and extraction of the target `host:port`.
 
@@ -171,6 +197,7 @@ The project is divided into independent layers:
 ```text
 src/
 ├── config.rs
+├── domain.rs
 ├── main.rs
 │
 ├── proxy/

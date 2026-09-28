@@ -5,6 +5,7 @@ use crate::{h1_fingerprint, h2_fingerprint};
 use crate::tls_fingerprint;
 use crate::{Data, ProxyConfig};
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -32,6 +33,55 @@ pub enum ConnectionStatus {
     Failure(String),
 }
 
+pub struct Router {
+    pub default: Data,
+    pub domains: Arc<HashMap<String, Data>>,
+}
+
+impl Router {
+    pub fn resolve(&self, sni: &str) -> Data {
+        if let Some(d) = self.lookup(sni) {
+            return d.clone();
+        }
+        self.default.clone()
+    }
+
+    fn lookup(&self, sni: &str) -> Option<&Data> {
+        let key = sni.trim_end_matches('.').to_ascii_lowercase();
+
+        // 1. exact: "mail.google.com"
+        if let Some(d) = self.domains.get(&key) {
+            return Some(d);
+        }
+
+        let domain = addr::parse_domain_name(&key).ok()?;
+        let root = domain.root()?; // "google.com" для "mail.google.com"
+        let suffix = domain.suffix(); // "com"
+
+        // 2. "*.google.com"
+        if key != root {
+            let candidate = format!("*.{root}");
+            if let Some(d) = self.domains.get(&candidate) {
+                return Some(d);
+            }
+        }
+
+        // 3. "*.google.*" / 4. "google.*"
+        if let Some(label) = root.strip_suffix(&format!(".{suffix}")) {
+            let candidate = format!("*.{label}.*");
+            if let Some(d) = self.domains.get(&candidate) {
+                return Some(d);
+            }
+            let candidate = format!("{label}.*");
+            if let Some(d) = self.domains.get(&candidate) {
+                return Some(d);
+            }
+        }
+
+        None
+    }
+}
+
 pub async fn connection(config: ProxyConfig) -> Result<()> {
     let addr = format!("127.0.0.1:{}", config.port);
     let socket = TcpListener::bind(addr).await?;
@@ -40,18 +90,19 @@ pub async fn connection(config: ProxyConfig) -> Result<()> {
     loop {
         let (client, addr) = socket.accept().await?;
 
-        let data = config.ctx.clone();
+        let router = Arc::clone(&config.router);
 
         crate::log_tag!(info, "TCP", "New connection: {}", addr);
         tokio::spawn(async move {
-            if let Err(e) = handle(client, data).await {
+            if let Err(e) = handle(client, router).await {
                 crate::log_tag!(error, "TCP", "Error: {e}");
             }
         });
     }
 }
 
-async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
+async fn handle(client: TcpStream, router: Arc<Router>) -> Result<()> {
+    let mut client = client;
     let mut buff: Vec<u8> = Vec::new();
     let mut buf = [0u8; 1024];
     let packet = loop {
@@ -82,12 +133,9 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
         }
     }
 
-    let host = match packet.get_header("host") {
-        Some(h) => h,
-        None => {
-            return Err(anyhow::anyhow!("Host header not found".to_string(),));
-        }
-    };
+    let host = packet
+        .get_header("host")
+        .ok_or_else(|| anyhow::anyhow!("Host header not found"))?;
 
     crate::log_tag!(
         info,
@@ -95,6 +143,10 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
         "Opening upstream connection for host: {}",
         host
     );
+
+    let sni = get_sni_from_packet(packet.clone())?;
+
+    let handle: Data = router.resolve(&sni);
 
     let remote = match upstream_connect(host, handle.upstream.clone()).await? {
         ConnectionStatus::Success(stream) => stream,
@@ -108,7 +160,6 @@ async fn handle(mut client: TcpStream, handle: Data) -> Result<()> {
     client.set_nodelay(true)?;
     remote.set_nodelay(true)?;
 
-    let sni = get_sni_from_packet(packet.clone())?;
     crate::log_tag!(
         info,
         "TLS",
@@ -192,11 +243,22 @@ pub async fn upstream_connect(
 }
 
 fn get_sni_from_packet(packet: Arc<HttpPacket>) -> Result<String> {
-    let host = match packet.get_header("host") {
-        Some(h) => h,
-        None => return Err(anyhow::anyhow!("Host header not found")),
+    let host = packet
+        .get_header("host")
+        .ok_or_else(|| anyhow::anyhow!("Host header not found"))?;
+    let host = host.trim();
+
+    let sni = if let Some(rest) = host.strip_prefix('[') {
+        let end = rest
+            .find(']')
+            .ok_or_else(|| anyhow::anyhow!("malformed IPv6 host"))?;
+        &rest[..end]
+    } else {
+        host.split(':')
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Failed split host"))?
     };
-    let sni = host.split(":").next().unwrap_or(host);
+
     Ok(sni.to_string())
 }
 

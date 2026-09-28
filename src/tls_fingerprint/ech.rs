@@ -18,6 +18,7 @@ use hickory_proto::rr::{Name, RData, RecordType};
 
 use bytes::Bytes;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
@@ -38,6 +39,13 @@ pub async fn set_ech(
     cache: Arc<EchCache>,
 ) -> Result<()> {
     if !tls.enable_ech {
+        if tls.enable_ech_grease {
+            ssl.set_enable_ech_grease(true);
+        }
+        return Ok(());
+    }
+
+    if target_domain.parse::<IpAddr>().is_ok() {
         if tls.enable_ech_grease {
             ssl.set_enable_ech_grease(true);
         }

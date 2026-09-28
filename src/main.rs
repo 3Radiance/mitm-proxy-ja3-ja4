@@ -88,8 +88,36 @@ async fn main() -> Result<()> {
         },
     };
 
+    let inflight = Arc::clone(&data.ctx.cache.inflight);
+
+    tokio::spawn(async move { gc(inflight).await });
+
     tracing::info!("[CFG] Loaded config: {:#?}", config);
 
     proxy::tcp::connection(data).await?;
     Ok(())
+}
+
+async fn gc(inflight: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>) {
+    let mut interval = tokio::time::interval(Duration::from_mins(5));
+    loop {
+        interval.tick().await;
+        let mut vec: Vec<String> = Vec::new();
+        let mut guard = inflight.lock().await;
+        for i in guard.iter() {
+            let (domain, mutex) = i;
+            match mutex.try_lock() {
+                Ok(_) => {}
+                Err(_) => continue,
+            }
+            match Arc::strong_count(mutex) {
+                1 => {}
+                _ => continue,
+            }
+            vec.push(domain.clone());
+        }
+        for i in vec {
+            guard.remove(&i);
+        }
+    }
 }

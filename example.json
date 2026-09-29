@@ -2,22 +2,27 @@
     "firefox_153_linux": {
         "config": {
             "port": 9090,
-            "upstream_proxy": "127.0.0.1:10808",
+            "upstream_proxy": null,
             "cert": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.crt",
             "key": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.key"
         },
         "tcp": {
-            "ttl": 64,
+            "mark": "0x10",
+            "qnum_syn": 301,
+            "qnum_tcp": 302,
+            "auto_iptables": true,
+            "ttl": 128,
             "window_size": 64240,
             "mss": 1460,
             "window_scale": 7,
             "dont_fragment": true,
+            "timestamp": true,
             "tcp_options_order": [
                 "mss",
                 "sack_perm",
                 "timestamp",
-                "nop",
-                "wscale"
+                "wscale",
+                "nop"
             ]
         },
         "tls": {
@@ -67,7 +72,7 @@
             "alps": false,
             "session_ticket": false,
             "grease_enabled": false,
-            "enable_ech": false,
+            "enable_ech": true,
             "enable_ech_grease": false,
             "record_size_limit": null,
             "doh": [
@@ -80,14 +85,14 @@
                 "enable_push": false,
                 "max_concurrent_streams": null,
                 "initial_window_size": 6291456,
-                "max_frame_size": null,
-                "max_header_list_size": 262144
+                "max_frame_size": 16384,
+                "max_header_list_size": null
             },
             "settings_order": [
                 "HEADER_TABLE_SIZE",
                 "ENABLE_PUSH",
                 "INITIAL_WINDOW_SIZE",
-                "MAX_HEADER_LIST_SIZE"
+                "MAX_FRAME_SIZE"
             ],
             "connection_window_update": 15663105,
             "initial_stream_id": null,

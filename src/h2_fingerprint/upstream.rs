@@ -41,7 +41,9 @@ pub async fn build_upstream_h2_builder(config: Arc<Http2Config>) -> Result<http2
         builder.headers_stream_dependency(dependency);
     }
 
-    builder.initial_connection_window_size(config.connection_window_update);
+    if let Some(cwu) = config.connection_window_update {
+        builder.initial_connection_window_size(cwu);
+    }
 
     let initial_id = if let Some(explicit) = config.initial_stream_id {
         explicit
@@ -62,26 +64,28 @@ pub fn set_settings_frame(
     builder: &mut http2::client::Builder,
     config: Arc<Http2Config>,
 ) -> Result<()> {
-    if let Some(v) = config.settings.header_table_size {
-        builder.header_table_size(v as u32);
-    }
+    if let Some(settings) = &config.settings {
+        if let Some(v) = settings.header_table_size {
+            builder.header_table_size(v as u32);
+        }
 
-    if let Some(v) = config.settings.initial_window_size {
-        builder.initial_window_size(v as u32);
-    }
+        if let Some(v) = settings.initial_window_size {
+            builder.initial_window_size(v as u32);
+        }
 
-    if let Some(v) = config.settings.max_frame_size {
-        builder.max_frame_size(v as u32);
-    }
+        if let Some(v) = settings.max_frame_size {
+            builder.max_frame_size(v as u32);
+        }
 
-    if let Some(v) = config.settings.max_concurrent_streams {
-        builder.max_concurrent_streams(v as u32);
-    }
+        if let Some(v) = settings.max_concurrent_streams {
+            builder.max_concurrent_streams(v as u32);
+        }
 
-    builder.enable_push(config.settings.enable_push);
+        builder.enable_push(settings.enable_push);
 
-    if let Some(v) = config.settings.max_header_list_size {
-        builder.max_header_list_size(v as u32);
+        if let Some(v) = settings.max_header_list_size {
+            builder.max_header_list_size(v as u32);
+        }
     }
 
     Ok(())
@@ -95,13 +99,16 @@ pub async fn upstream_reconnect(proxydata: ConnectionData) -> Result<SslStream<T
         }
     };
 
-    let remote = match proxy::tcp::upstream_connect(host, proxydata.upstream.clone()).await? {
-        proxy::tcp::ConnectionStatus::Success(stream) => stream,
-        proxy::tcp::ConnectionStatus::Failure(reason) => {
-            crate::log_tag!(warn, "TCP", "Connection failure: {}", reason);
-            return Err(anyhow::anyhow!(reason));
-        }
-    };
+    let remote =
+        match proxy::tcp::upstream_connect(host, proxydata.upstream.clone(), proxydata.tcp.clone())
+            .await?
+        {
+            proxy::tcp::ConnectionStatus::Success(stream) => stream,
+            proxy::tcp::ConnectionStatus::Failure(reason) => {
+                crate::log_tag!(warn, "TCP", "Connection failure: {}", reason);
+                return Err(anyhow::anyhow!(reason));
+            }
+        };
 
     remote.set_nodelay(true)?;
 
@@ -109,6 +116,7 @@ pub async fn upstream_reconnect(proxydata: ConnectionData) -> Result<SslStream<T
         remote,
         &proxydata.sni,
         proxydata.tls,
+        proxydata.tcp,
         proxydata.http2,
         true,
         proxydata.upstream,

@@ -17,6 +17,7 @@ use super::request::*;
 #[derive(Clone)]
 pub struct ConnectionData {
     pub tls: Arc<TlsConfig>,
+    pub tcp: Arc<TcpConfig>,
     pub http2: Arc<Http2Config>,
     pub http1: Arc<Http1Config>,
     pub upstream: Arc<Option<String>>,

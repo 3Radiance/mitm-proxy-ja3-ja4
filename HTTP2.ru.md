@@ -1,8 +1,34 @@
-## HTTP/2 Fingerprinting (Akamai)
+# Подмена HTTP/2-отпечатка (Akamai)
 
-HTTP/2-фингерпринтинг полностью настраивается через секцию `http2` JSON-профиля. Конфигурация управляет поведением connection preface, SETTINGS-фреймом, приоритетами потоков, порядком заголовков, расположением `END_STREAM` и изменением HTTP-заголовков.
+[English](HTTP2.md) | [Русский](HTTP2.ru.md)
 
-Пример:
+HTTP/2-фингерпринтинг (Akamai-хэш по SETTINGS, размерам окон,
+приоритетам и порядку заголовков) полностью настраивается секцией
+`http2` JSON-профиля. Прокси формирует **апстрим**-соединение — префейс,
+SETTINGS-фрейм, приоритеты потоков, порядок заголовков, — а клиентская
+сторона просто принимает то, что предлагает браузер
+(`src/h2_fingerprint/`).
+
+## Схема соединения
+
+```
+браузер ──h2 хендшейк──▶ прокси ──h2 хендшейк (по профилю)──▶ апстрим
+браузер ──HEADERS───────▶ прокси ──HEADERS (переупорядочены)──▶ апстрим
+```
+
+`handle_h2` гоняет оба хендшейка конкурентно, с таймаутом 5 секунд на
+каждый: обычный серверный в сторону клиента и профилированный клиентский
+в сторону апстрима (собирается `build_upstream_h2_builder`). Каждый
+запрос потом пересобирается через `apply_http_headers` (порядок +
+значения) и уходит на апстрим с настроенным приоритетом и размещением
+`END_STREAM`; тела стримятся без буферизации, трейлеры включительно.
+
+Если апстрим-соединение рвётся посреди запроса, прокси переподключается
+(`upstream_reconnect`, с тем же TCP/TLS/HTTP2-профилем — включая
+маркированный сокет) и падает на несовпадении ALPN, так что реконнект
+никогда не даунгрейдит тихо `h2` до `http/1.1`.
+
+## Конфигурация (блок `http2`)
 
 ```json
 "http2": {
@@ -10,333 +36,151 @@ HTTP/2-фингерпринтинг полностью настраиваетс�
         "header_table_size": 65536,
         "enable_push": false,
         "max_concurrent_streams": null,
-        "initial_window_size": 131072,
+        "initial_window_size": 6291456,
         "max_frame_size": 16384,
         "max_header_list_size": null
     },
-
-    "settings_order": [
-        "HEADER_TABLE_SIZE",
-        "ENABLE_PUSH",
-        "INITIAL_WINDOW_SIZE",
-        "MAX_FRAME_SIZE"
-    ],
-
-    "connection_window_update": 12582912,
-
+    "settings_order": ["HEADER_TABLE_SIZE", "ENABLE_PUSH", "INITIAL_WINDOW_SIZE", "MAX_FRAME_SIZE"],
+    "connection_window_update": 15663105,
     "initial_stream_id": null,
-
     "priority_frames": null,
-
-    "headers_priority": {
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 41
-    },
-
-    "end_stream_on_headers": false,
-
-    "pseudo_headers_order": [
-        ":method",
-        ":path",
-        ":authority",
-        ":scheme"
-    ],
-
-    "headers_order": [
-        "user-agent",
-        "accept-language"
-    ],
-
+    "headers_priority": { "exclusive": true, "depends_on": 0, "weight": 255 },
+    "end_stream_on_headers": true,
+    "pseudo_headers_order": [":method", ":authority", ":scheme", ":path"],
+    "headers_order": null,
     "http_headers": {
-        "user-agent": "Mozilla/5.0",
+        "user-agent": "Mozilla/5.0 (...)",
         "accept-language": "en-US,en;q=0.6"
     }
 }
 ```
 
-### SETTINGS
+### `settings` — значения SETTINGS-фрейма
 
-Объект `settings` управляет значениями, которые отправляются в HTTP/2 `SETTINGS`-фрейме.
+Значения, рекламируемые в апстрим SETTINGS-фрейме
+(`set_settings_frame`). `null` полностью убирает параметр; `enable_push`
+— обычный bool и отправляется всегда:
 
-Поддерживаемые поля:
+| Поле | Смысл |
+|---|---|
+| `header_table_size` | Размер динамической HPACK-таблицы. `null` = не слать. |
+| `enable_push` | Server push вкл/выкл. Отправляется всегда. |
+| `max_concurrent_streams` | Максимум одновременно активных стримов. `null` = не слать. |
+| `initial_window_size` | Окно flow-control на стрим. |
+| `max_frame_size` | Максимальный размер пейлоада фрейма. |
+| `max_header_list_size` | Максимальный размер списка заголовков. `null` = не слать. |
 
-* `header_table_size` — размер динамической таблицы HPACK. Используйте `null`, чтобы не отправлять этот параметр.
-* `enable_push` — включает или отключает HTTP/2 Server Push.
-* `max_concurrent_streams` — максимальное количество одновременно активных потоков. Используйте `null`, чтобы не отправлять этот параметр.
-* `initial_window_size` — начальный размер окна flow control для потоков.
-* `max_frame_size` — максимальный размер payload HTTP/2-фрейма.
-* `max_header_list_size` — максимальный размер списка заголовков. Используйте `null`, чтобы не отправлять этот параметр.
+Если объекта `settings` нет вообще — ничего не кастомизируется,
+действуют дефолты клиента.
 
-Значения отправляются в соответствии с `settings_order`.
+### `settings_order` — порядок параметров SETTINGS
 
-### Порядок SETTINGS
+Порядок параметров в исходящем SETTINGS-фрейме. Испускаются только
+параметры из `settings`, ровно в этом порядке:
 
-`settings_order` управляет порядком отдельных параметров SETTINGS в исходящем SETTINGS-фрейме.
-
-Поддерживаемые значения:
-
-```text
+```
 HEADER_TABLE_SIZE
-
 ENABLE_PUSH
-
 MAX_CONCURRENT_STREAMS
-
 INITIAL_WINDOW_SIZE
-
 MAX_FRAME_SIZE
-
 MAX_HEADER_LIST_SIZE
 ```
 
-Отправляются только те настройки, которые присутствуют в конфигурации.
+Неизвестные имена — ошибка на этапе хендшейка: список валидируется при
+создании билдера, так что опечатка уронит первое же `h2`-соединение
+сразу, а не даст молча кривой отпечаток.
 
-Например:
+### `connection_window_update` — окно соединения
 
-```json
-"settings_order": [
-    "HEADER_TABLE_SIZE",
-    "ENABLE_PUSH",
-    "INITIAL_WINDOW_SIZE",
-    "MAX_FRAME_SIZE"
-]
-```
+`initial_connection_window_size` для апстрим-соединения: окно
+flow-control на уровне соединения, независимо от
+постримового `initial_window_size`. `null` (или отсутствие) оставляет
+дефолт клиента. Настоящие браузеры ставят тут характерные большие
+значения (напр. `15663105` у Firefox), так что поле важнее, чем кажется.
 
-отправит настроенные параметры именно в указанном порядке.
+### `initial_stream_id` — первый стрим запроса
 
-### Обновление connection window
+Явный ID первого клиентского стрима. При `null` выводится сам:
 
-`connection_window_update` управляет величиной увеличения connection-level `WINDOW_UPDATE`, отправляемого после установки HTTP/2-соединения.
+- без priority-фреймов → `1`;
+- с priority-фреймами → максимальный настроенный `stream_id` + 2
+  (priority-фреймы занимают ID до первого настоящего запроса).
 
-Например:
+При ручной установке вместе с `priority_frames` бери свободный нечётный
+ID за ними — коллизия ломает соединение.
 
-```json
-"connection_window_update": 12582912
-```
+### `priority_frames` — PRIORITY-фреймы до запросов
 
-Этот параметр управляет окном flow control всего соединения независимо от `initial_window_size`, который применяется к отдельным потокам.
-
-### Начальный ID потока
-
-`initial_stream_id` определяет ID первого клиентского HTTP/2-потока.
-
-Если `initial_stream_id` задан явно, используется указанное значение.
-
-Если значение равно `null`, ID вычисляется автоматически:
-
-* без priority-фреймов начальный stream ID равен `1`;
-* при наличии priority-фреймов начальный stream ID вычисляется как максимальный настроенный priority stream ID плюс `2`.
-
-Например, если настроены следующие priority-потоки:
+PRIORITY-фреймы, отправляемые до обычных стримов запросов (классический
+сигнал дерева приоритетов Firefox/Chrome):
 
 ```json
 "priority_frames": [
-    {
-        "stream_id": 1,
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 41
-    },
-    {
-        "stream_id": 3,
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 42
-    }
+    { "stream_id": 1, "exclusive": false, "depends_on": 0, "weight": 41 },
+    { "stream_id": 3, "exclusive": false, "depends_on": 0, "weight": 42 }
 ]
 ```
 
-начальный stream ID автоматически будет равен `5`.
+| Поле | Смысл |
+|---|---|
+| `stream_id` | Стрим, к которому привязано определение приоритета (клиентские стримы нечётные). |
+| `exclusive` | Эксклюзивность зависимости. |
+| `depends_on` | Родительский стрим (`0` = корень соединения). |
+| `weight` | Вес приоритета (на проводе 1–256; в конфиге сырое значение). |
 
-Это важно, поскольку HTTP/2 priority-фреймы могут занимать stream ID ещё до создания первого реального request stream. Если priority-фреймы настроены, не следует вручную задавать `initial_stream_id`, конфликтующий с этими потоками.
+`null` или пусто = без priority-фреймов. В примере выше при
+`initial_stream_id: null` первый стрим запроса автовыберется как `5`.
 
-При ручной настройке `initial_stream_id` вместе с `priority_frames` убедитесь, что выбран подходящий свободный client stream ID и соблюдаются правила HTTP/2 для stream ID.
+### `headers_priority` — зависимость HEADERS-стрима
 
-### Priority-фреймы
-
-`priority_frames` — это массив определений HTTP/2-приоритетов, которые отправляются до обычных request streams.
-
-Каждый элемент содержит:
-
-```json
-{
-    "stream_id": 1,
-    "exclusive": false,
-    "depends_on": 0,
-    "weight": 41
-}
-```
-
-Поля:
-
-* `stream_id` — ID потока, связанный с определением приоритета. Для клиентских потоков используются нечётные stream ID.
-* `exclusive` — определяет, становится ли зависимость исключительной.
-* `depends_on` — ID родительского потока.
-* `weight` — вес приоритета потока.
-
-Пример:
+Приоритет, цепляемый к каждому HEADERS-стриму запроса
+(`headers_stream_dependency`):
 
 ```json
-"priority_frames": [
-    {
-        "stream_id": 1,
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 41
-    },
-    {
-        "stream_id": 3,
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 42
-    }
-]
+"headers_priority": { "exclusive": true, "depends_on": 0, "weight": 255 }
 ```
 
-Если priority-фреймы настроены, а `initial_stream_id` равен `null`, прокси автоматически выбирает следующий доступный нечётный stream ID после максимального настроенного priority stream.
+Те же поля, что у priority-фреймов, минус `stream_id`. `null` = без
+кастомной зависимости, HEADERS уходит с дефолтами.
 
-### Приоритет заголовков
+### `end_stream_on_headers` — размещение END_STREAM
 
-`headers_priority` управляет приоритетом, связанным с request HEADERS stream.
+Куда ставится `END_STREAM` для запросов **без** тела:
 
-Пример:
+- `true` → `HEADERS + END_STREAM` (стиль Firefox);
+- `false` → `HEADERS`, затем `DATA(length=0) + END_STREAM` (стиль Chrome).
+
+Запросы **с** телом всегда закрываются на финальном DATA-фрейме — флаг
+это не двигает. Срабатывает только когда входящий запрос сам
+end-of-stream, то есть перекраивает закрытие, а не выдумывает его.
+
+### `pseudo_headers_order` — порядок псевдозаголовков
+
+Порядок `:method`, `:path`, `:authority`, `:scheme` в исходящих
+запросах. Неизвестные имена роняют билд (fail fast, как у настроек).
+Браузеры тут характерно различаются — Firefox шлёт
+`:method, :authority, :scheme, :path`, — так что копируй цель, не
+импровизируй:
 
 ```json
-"headers_priority": {
-    "exclusive": false,
-    "depends_on": 0,
-    "weight": 41
-}
+"pseudo_headers_order": [":method", ":authority", ":scheme", ":path"]
 ```
 
-Поля имеют то же значение, что и у priority-фреймов:
+### `headers_order` + `http_headers` — заголовки
 
-* `exclusive`
-* `depends_on`
-* `weight`
+Двухстадийный конвейер (`apply_http_headers`):
 
-Установите `headers_priority` в `null`, если специальный приоритет для заголовков не требуется.
-
-### END_STREAM в request HEADERS
-
-`end_stream_on_headers` управляет расположением `END_STREAM` для запросов, у которых отсутствует тело.
-
-При значении `true`:
-
-```text
-HEADERS + END_STREAM
-```
-
-используется для пустого запроса.
-
-При значении `false`:
-
-```text
-HEADERS
-DATA(length=0) + END_STREAM
-```
-
-используется вместо этого.
-
-Для запросов, содержащих тело, `END_STREAM` отправляется в последнем DATA-фрейме, и эта настройка не переносит его в начальный HEADERS-фрейм.
-
-Это позволяет подбирать последовательность HTTP/2-фреймов под разные клиентские фингерпринты.
-
-### Порядок pseudo-заголовков
-
-`pseudo_headers_order` управляет порядком HTTP/2 pseudo-заголовков в исходящих запросах.
-
-Поддерживаемые pseudo-заголовки:
-
-```text
-:method
-
-:path
-
-:authority
-
-:scheme
-```
-
-Пример:
+1. Обход `headers_order`; для каждого имени значение берётся из
+   `http_headers`, если задано (`"строка"` = заменить, `null` =
+   удалить), иначе входящие значения копируются как есть.
+2. В конец дописываются настроенные заголовки вне порядка (только
+   замены — `null`-записи скипаются).
+3. В конец дописываются все остальные входящие заголовки, которых ещё
+   не видели.
 
 ```json
-"pseudo_headers_order": [
-    ":method",
-    ":path",
-    ":authority",
-    ":scheme"
-]
-```
-
-Указанный порядок сохраняется при построении исходящего запроса.
-
-### Порядок HTTP-заголовков
-
-`headers_order` управляет порядком обычных HTTP-заголовков запроса.
-
-Пример:
-
-```json
-"headers_order": [
-    "user-agent",
-    "accept-language",
-    "accept-encoding",
-    "referer"
-]
-```
-
-Указанные здесь заголовки обрабатываются строго в этом порядке.
-
-### Изменение HTTP-заголовков
-
-`http_headers` управляет значениями отдельных HTTP-заголовков.
-
-Строковое значение заменяет входящее значение:
-
-```json
-"http_headers": {
-    "user-agent": "Mozilla/5.0"
-}
-```
-
-Заголовок можно удалить, установив его значение в `null`:
-
-```json
-"http_headers": {
-    "referer": null
-}
-```
-
-Заголовки также можно добавить, даже если их не было в исходном запросе:
-
-```json
-"http_headers": {
-    "priority": "u=0, i"
-}
-```
-
-Заголовки, которые не указаны в `http_headers`, сохраняются из входящего запроса.
-
-Таким образом, можно:
-
-* заменять существующие заголовки;
-* удалять заголовки;
-* добавлять новые заголовки;
-* сохранять неуказанные входящие заголовки;
-* управлять итоговым порядком заголовков через `headers_order`.
-
-Например:
-
-```json
-"headers_order": [
-    "user-agent",
-    "accept",
-    "accept-language",
-    "priority"
-],
-
+"headers_order": ["user-agent", "accept", "accept-language", "priority"],
 "http_headers": {
     "user-agent": "Mozilla/5.0",
     "accept-language": "en-US,en;q=0.6",
@@ -345,39 +189,51 @@ DATA(length=0) + END_STREAM
 }
 ```
 
-В этой конфигурации:
+Итог: `user-agent` заменён, `accept-language` заменён, `priority`
+добавлен (современный хинт-заголовок Chrome), `referer` удалён, `accept`
+прошёл от браузера, всё в указанном порядке. Заголовки вне обоих
+списков проходят в порядке прибытия в самом конце. `null` в обоих полях
+= байт-прозрачный прогон.
 
-* `user-agent` заменяется;
-* `accept-language` заменяется;
-* `priority` добавляется;
-* `referer` удаляется;
-* `accept` сохраняется из входящего запроса;
-* итоговые заголовки следуют настроенному порядку.
+### Стриминг и трейлеры
 
-### Потоковая передача HTTP/2 request и response
-
-Тела запросов и ответов передаются в потоковом режиме, без полного буферизования тела в памяти.
-
-Прокси также сохраняет HTTP/2 trailing headers (trailers). Если присутствуют trailers, последний DATA-фрейм не содержит `END_STREAM`; вместо этого поток закрывается завершающим HEADERS-фреймом.
-
-Без trailers:
+Тела в обе стороны стримятся — никакой буферизации целиком. Трейлеры
+обрабатываются по фреймам: с трейлерами финальный DATA идёт без
+`END_STREAM`, стрим закрывает trailing HEADERS:
 
 ```text
-HEADERS
-
-DATA
-
-DATA + END_STREAM
+HEADERS → DATA → DATA + END_STREAM            (без трейлеров)
+HEADERS → DATA → DATA → TRAILERS + END_STREAM (с трейлерами)
 ```
 
-С trailers:
+## Связка с ALPS
 
-```text
-HEADERS
+При `tls.alps: true` те же `settings` + `settings_order` перекодируются
+в TLS ALPS-пейлоад для `h2` (см. `TLS.ru.md`) — браузеры используют ровно
+ту же кодировку, так что один конфиг едет в оба места на проводе. Держи
+их в синхроне с целевым браузером: расхождение SETTINGS-фрейма и
+ALPS-пейлоада само по себе сигнал для отпечатка.
 
-DATA
+## HTTP/2 по доменам (`-d domain.json`)
 
-DATA
+Любое поле `http2` переопределяется под паттерн домена; подполя
+`settings` мерджатся поштучно, остальное — стандартное
+наследовать-или-переопределить (`null` сбрасывает). Так как билд
+создаётся на каждое апстрим-соединение из разрешённого профиля, разные
+домены могут показывать совершенно разные Akamai-хэши через один инстанс
+прокси — в паре с Multi-Account Containers на стороне браузера.
 
-TRAILERS + END_STREAM
-```
+## Грабли
+
+- Записи `settings_order`, `pseudo_headers_order` валидируются —
+  неизвестные имена роняют соединение, а не деградируют тихо. Сверяй
+  написание со словарями выше.
+- Значения `settings` вне протокольного диапазона (напр. абсурдный
+  `max_frame_size`) отвергаются HTTP/2-стеком на хендшейке.
+- `initial_stream_id`, коллизящий с ID из `priority_frames`, убивает
+  соединение — лучше `null` и автовывод.
+- `end_stream_on_headers` перекраивает только пустые запросы; запросы с
+  телом не затрагиваются по дизайну.
+- Клиентский хендшейк дженерик — настроенный отпечаток видит
+  **апстрим** (и чекер за ним). Валидируй через чекеры вида `tls.peet.ws`
+  сквозь прокси, а не против локального порта прокси.

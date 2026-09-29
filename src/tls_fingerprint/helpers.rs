@@ -69,7 +69,11 @@ pub fn set_alpn_select_callback(builder: &mut SslContextBuilder, alpn_bytes: Vec
 pub fn set_cipher_suites(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
     builder.set_preserve_tls13_cipher_list(true);
 
-    let ciphers = tls.cipher_suites.join(":");
+    let ciphers = tls
+        .cipher_suites
+        .as_ref()
+        .map(|v| v.join(":"))
+        .unwrap_or_default();
 
     builder
         .set_cipher_list(&ciphers)
@@ -86,7 +90,7 @@ pub fn set_alpn_protos(builder: &mut SslContextBuilder, alpn_bytes: Vec<u8>) -> 
 }
 
 pub fn set_curves_list(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
-    let curve_list = tls.curves.join(":");
+    let curve_list = tls.curves.as_ref().map(|v| v.join(":")).unwrap_or_default();
     builder
         .set_curves_list(&curve_list)
         .map_err(|e| anyhow::anyhow!("[TLS] Failed to set curves: {e}"))?;
@@ -94,7 +98,11 @@ pub fn set_curves_list(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> 
 }
 
 pub fn set_sigalgs_list(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
-    let sigalgs = tls.signature_algorithms.join(":");
+    let sigalgs = tls
+        .signature_algorithms
+        .as_ref()
+        .map(|v| v.join(":"))
+        .unwrap_or_default();
     builder
         .set_sigalgs_list(&sigalgs)
         .map_err(|e| anyhow::anyhow!("[TLS] Failed to set signature algorithms: {e}"))?;
@@ -118,7 +126,7 @@ pub fn set_record_size_limit(builder: &mut SslContextBuilder, tls: Arc<TlsConfig
 }
 
 pub fn set_cert_compression(builder: &mut SslContextBuilder, tls: Arc<TlsConfig>) -> Result<()> {
-    for algo in &tls.cert_compression {
+    for algo in tls.cert_compression.as_deref().unwrap_or(&[]) {
         match algo.as_str() {
             "brotli" => builder
                 .add_certificate_compression_algorithm(BrotliCompressor)
@@ -188,4 +196,17 @@ pub fn set_alps(ssl: &mut Ssl, http2: Arc<Http2Config>, tls: Arc<TlsConfig>) {
             }
         }
     }
+}
+
+pub fn set_delegated_credentials(
+    builder: &mut SslContextBuilder,
+    tls: Arc<TlsConfig>,
+) -> Result<()> {
+    if let Some(algs) = &tls.delegated_credentials {
+        let list = algs.join(":");
+        builder
+            .set_delegated_credentials(&list)
+            .map_err(|e| anyhow::anyhow!("[TLS] Failed to set delegated credentials: {e}"))?;
+    }
+    Ok(())
 }

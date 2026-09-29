@@ -6,7 +6,7 @@ An HTTP MITM proxy built with Rust, `tokio`, and `btls`.
 
 > **Currently in MVP (Minimum Viable Product) stage.**
 
-This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, extension permutation/ordering, OCSP stapling, Certificate Transparency (SCT), session tickets, ALPS, and Encrypted Client Hello (ECH, resolved live via DoH, with GREASE fallback) are all driven by a JSON profile. HTTP/2 fingerprinting (Akamai) and HTTP/1.1 header ordering/rewriting are also fully configurable. TCP (L4) fingerprinting is the next layer to be built.
+This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, extension permutation/ordering, OCSP stapling, Certificate Transparency (SCT), session tickets, ALPS, and Encrypted Client Hello (ECH, resolved live via DoH, with GREASE fallback) are all driven by a JSON profile. HTTP/2 fingerprinting (Akamai) and HTTP/1.1 header ordering/rewriting are also fully configurable. TCP (L4) fingerprinting is live too: SYN packets of upstream connections are rewritten in NFQUEUE (TTL, window size, MSS, window scale, DF flag, timestamps, exact TCP option order, per-domain marks) with automatic iptables management.
 
 ### TLS Fingerprint Spoofing Configuration
 
@@ -15,6 +15,10 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 ### HTTP/2 Fingerprint Spoofing Configuration
 
 [HTTP/2](HTTP2.md)
+
+### TCP Fingerprint Spoofing Configuration
+
+[TCP](TCP.md)
 
 ## Features (Current Implementation)
 
@@ -52,24 +56,24 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 * **HTTP/1.1 Header Spoofing** — Configurable header order and content for plain HTTP/1.1 upstream connections (when ALPN doesn't negotiate `h2`), mirroring the same override/removal semantics used for HTTP/2.
 
+* **TCP Fingerprint Spoofing (L4) — complete.** Outgoing upstream connections are fingerprinted at the packet level via Linux NFQUEUE (`src/tcp_fingerprint/`):
+
+  * SYN rewriting: TTL, window size, DF flag, MSS / window-scale values, timestamp toggle, exact TCP option order (or in-place value patching when no order is set), with checksum recalculation.
+  * Established-flow queue patching TTL/DF only (IPv6 hop limit supported); every packet gets an `Accept` verdict by default so queues never stall.
+  * `SO_MARK`-based routing to per-domain TCP profiles, automatic iptables management (top-inserted above tools like zapret/nfqws, deduplicated, removed on Ctrl+C shutdown) with `--queue-bypass` safety.
+  * See `TCP.md` and the `tcp` block in `example.json`.
+
 * **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method.
 
-* **Per-Domain Profile Routing** — Pass `-d` / `--domain <path>` with a map of domain patterns to partial profile overlays (see `domain.json`). Each connection is matched by SNI (exact → `*.root` → `*.label.*` → `label.*` → base profile) and served with its own TLS/HTTP2/HTTP1/upstream settings, prebuilt once at startup. Only the fields that differ from the base profile need to be specified; everything else is inherited.
+* **Per-Domain Profile Routing** — Pass `-d` / `--domain <path>` with a map of domain patterns to partial profile overlays (see `domain.json`). Each connection is matched by SNI (exact → `*.root` → `*.label.*` → `label.*` → base profile) and served with its own TCP/TLS/HTTP2/HTTP1/upstream settings, prebuilt once at startup. Only the fields that differ from the base profile need to be specified; everything else is inherited.
 
 * **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
-
-### Roadmap & Future Plans
-
-The current architecture is a foundation for highly advanced fingerprint spoofing:
-
-* **L4 TCP Fingerprinting (NFQueue)**
-
-  Implement a Layer 4 module using Linux `nfqueue` (Netfilter Queue) to spoof TCP fingerprints, including TTL, TCP window size, MSS, window scaling, and the exact order of TCP options.
 
 ## Requirements
 
 - Rust (edition 2021)
-- Linux (for future `nfqueue` L4 features)
+- Linux (required for the NFQUEUE L4 features)
+- Root or `CAP_NET_ADMIN` (for `SO_MARK`, NFQUEUE bind, and automatic iptables; without it set `"auto_iptables": false` in the `tcp` block and apply the mangle rules by hand — see `TCP.md`)
 - Firefox with [Multi-Account Containers](https://addons.mozilla.org/firefox/addon/multi-account-containers/) (highly recommended for leveraging multiple fingerprints simultaneously)
 
 ## Logging
@@ -84,7 +88,7 @@ RUST_LOG='TCP=debug,H2=error,TLS=warn' cargo run --release -- -c profile.json
 RUST_LOG='CA=info,TLS=warn,H2=error' cargo run --release -- -c profile.json
 ```
 
-Supported tags are the same module names used in the code: `TCP`, `HTTP`, `H1`, `H2`, `TLS`, `CA`, `ECH`, `CFG`.
+Supported tags are the same module names used in the code: `TCP`, `HTTP`, `H1`, `H2`, `TLS`, `CA`, `ECH`, `CFG`, `IPT`, `NFQUEUE`, `Runtime`.
 
 Log lines include a timestamp by default, so debugging sessions are easier to correlate.
 
@@ -140,11 +144,28 @@ cargo run --release -- -c profile.json -d domain.json
   },
   "*.google.com": {
     "tls": { "enable_ech": true }
+  },
+  "tls.peet.ws": {
+    "tcp": {
+      "mark": "0x11",
+      "ttl": 100,
+      "window_size": 64130,
+      "mss": 1400,
+      "window_scale": 7,
+      "dont_fragment": true,
+      "timestamp": false,
+      "tcp_options_order": ["mss", "sack_perm", "wscale", "nop"]
+    }
+  },
+  "mail.google.*": {
+    "tls": {
+      "curves": ["X25519", "P-256"]
+    }
   }
 }
 ```
 
-Match order per connection (by SNI, case-insensitive): exact → `*.root` → `*.label.*` → `label.*` → base profile. A missing key (or `null` anywhere except `upstream_proxy`) means "inherit from base", while `"upstream_proxy": null` explicitly forces a direct connection for that domain.
+Match order per connection (by SNI, case-insensitive): exact → `*.root` → `*.label.*` → `label.*` → base profile. A missing key (or `null` anywhere except `upstream_proxy`) means "inherit from base", while `"upstream_proxy": null` explicitly forces a direct connection for that domain. TCP fields (including `mark`) inherit the base profile the same way — `"mark": null` unsets the mark for that domain. Note: if the base profile sets `upstream_proxy`, no `SO_MARK` is applied at all and the TCP layer is bypassed (see `TCP.md`).
 
 ## Architecture Highlights
 
@@ -158,7 +179,7 @@ Match order per connection (by SNI, case-insensitive): exact → `*.root` → `*
 
 ### Proxy Layer
 
-* `src/proxy/tcp.rs`: TCP connection handling, initial HTTP `CONNECT` parsing, upstream TCP connection establishment, SNI extraction, per-domain profile routing (SNI match with fallback to the base profile), upstream TLS negotiation, and bridging the resulting TLS connection to the client.
+* `src/proxy/tcp.rs`: TCP connection handling, initial HTTP `CONNECT` parsing, upstream TCP connection establishment (marked sockets via `SO_MARK` when the profile sets `mark`), SNI extraction, per-domain profile routing (SNI match with fallback to the base profile), upstream TLS negotiation, and bridging the resulting TLS connection to the client.
 
 * `src/proxy/http.rs`: Minimal HTTP/1.x request/response parsing using `httparse`, including `CONNECT` method validation and extraction of the target `host:port`.
 
@@ -190,6 +211,12 @@ Match order per connection (by SNI, case-insensitive): exact → `*.root` → `*
 
 * `src/h1_fingerprint/h1.rs`: HTTP/1.1 upstream request handling (used when ALPN doesn't negotiate `h2`), including configurable header order and content, built on `hyper`.
 
+### TCP Fingerprinting
+
+* `src/tcp_fingerprint/syn.rs`: NFQUEUE consumer for SYN packets — window/TTL/DF rewrite, TCP option rebuild from `tcp_options_order`, checksum recalculation, fwmark cleared on verdict.
+* `src/tcp_fingerprint/tcp.rs`: NFQUEUE consumer for the established flow — TTL/DF only (IPv6 hop limit), everything accepted by default.
+* `src/tcp_fingerprint/iptables.rs`: automatic mangle rule management — top-insert above third-party rules, dedup, shutdown cleanup.
+
 ### Module Structure
 
 The project is divided into independent layers:
@@ -199,11 +226,18 @@ src/
 ├── config.rs
 ├── domain.rs
 ├── main.rs
+├── logging.rs
 │
 ├── proxy/
 │   ├── mod.rs
 │   ├── tcp.rs
 │   └── http.rs
+│
+├── tcp_fingerprint/
+│   ├── mod.rs
+│   ├── syn.rs
+│   ├── tcp.rs
+│   └── iptables.rs
 │
 ├── tls_fingerprint/
 │   ├── mod.rs
@@ -226,7 +260,7 @@ src/
     └── h1.rs
 ```
 
-The `proxy` layer handles raw TCP and HTTP `CONNECT` traffic, the `tls_fingerprint` layer handles TLS interception, TLS fingerprinting, and ECH resolution, the `h2_fingerprint` layer handles HTTP/2 fingerprinting and stream-level traffic, and the `h1_fingerprint` layer handles HTTP/1.1 header fingerprinting for upstream connections that don't negotiate `h2`. This separation keeps transport, TLS, and per-protocol fingerprinting logic independent while allowing the layers to work together during a single proxied connection.
+The `proxy` layer handles raw TCP and HTTP `CONNECT` traffic, the `tcp_fingerprint` layer rewrites outgoing packets in NFQUEUE before they hit the wire, the `tls_fingerprint` layer handles TLS interception, TLS fingerprinting, and ECH resolution, the `h2_fingerprint` layer handles HTTP/2 fingerprinting and stream-level traffic, and the `h1_fingerprint` layer handles HTTP/1.1 header fingerprinting for upstream connections that don't negotiate `h2`. This separation keeps transport, L4, TLS, and per-protocol fingerprinting logic independent while allowing the layers to work together during a single proxied connection.
 
 ## License
 

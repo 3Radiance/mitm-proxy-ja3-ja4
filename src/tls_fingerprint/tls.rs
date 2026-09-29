@@ -27,13 +27,23 @@ pub async fn create_ssl_acceptor_upstream(
     client: TcpStream,
     target_host: &str,
     tls: Arc<TlsConfig>,
+    tcp: Arc<TcpConfig>,
     http2: Arc<Http2Config>,
     need_ech: bool,
     upstream: Arc<Option<String>>,
     cache: Arc<EchCache>,
 ) -> Result<(SslStream<TcpStream>, Option<Vec<u8>>)> {
     let mut builder = SslConnector::builder(SslMethod::tls())?;
-    builder.set_default_verify_paths()?;
+    let mut store_builder = btls::x509::store::X509StoreBuilder::new()?;
+
+    for cert_der in chromium_roots::TLS_SERVER_ROOT_CERTS {
+        if let Ok(cert) = btls::x509::X509::from_der(cert_der) {
+            store_builder.add_cert(cert)?;
+        }
+    }
+
+    let store = store_builder.build();
+    builder.set_cert_store(store);
 
     set_cipher_suites(&mut builder, tls.clone())?;
     set_alpn_protos(&mut builder, tls.encode_alpn_wire())?;
@@ -46,6 +56,7 @@ pub async fn create_ssl_acceptor_upstream(
     set_status_request(&mut builder, tls.clone());
     set_signed_certificate_timestamp(&mut builder, tls.clone());
     set_session_ticket(&mut builder, tls.clone());
+    set_delegated_credentials(&mut builder, tls.clone())?;
     set_extensions_order(&mut builder, tls.clone())?;
 
     let connector = builder.build();
@@ -54,7 +65,16 @@ pub async fn create_ssl_acceptor_upstream(
 
     set_alps(&mut ssl, http2.clone(), tls.clone());
     if need_ech {
-        set_ech(&mut ssl, tls.clone(), http2, target_host, upstream, cache).await?;
+        set_ech(
+            &mut ssl,
+            tls.clone(),
+            tcp,
+            http2,
+            target_host,
+            upstream,
+            cache,
+        )
+        .await?;
     }
 
     let mut s = SslStream::new(ssl, client)?;

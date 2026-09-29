@@ -3,7 +3,7 @@ use tokio::net::TcpStream;
 use tokio_btls::SslStream;
 
 use crate::{
-    config::{Http2Config, TlsConfig},
+    config::{Http2Config, TcpConfig, TlsConfig},
     h2_fingerprint::upstream::build_upstream_h2_builder,
     proxy::tcp::{upstream_connect, ConnectionStatus},
     tls_fingerprint,
@@ -33,6 +33,7 @@ pub struct EchCache {
 pub async fn set_ech(
     ssl: &mut Ssl,
     tls: Arc<TlsConfig>,
+    tcp: Arc<TcpConfig>,
     http2: Arc<Http2Config>,
     target_domain: &str,
     upstream: Arc<Option<String>>,
@@ -82,14 +83,14 @@ pub async fn set_ech(
 
     let doh_domain: &str = {
         let mut rng = rand::thread_rng();
-        tls.doh
-            .choose(&mut rng)
+        tls.doh.as_ref().and_then(|d| d.choose(&mut rng))
             .map(String::as_str)
             .context("Failed to get DoH domain")?
     };
 
     let remote = upstream_for_ech(
         tls.clone(),
+        tcp.clone(),
         http2.clone(),
         upstream,
         cache.clone(),
@@ -177,6 +178,7 @@ fn extract_ech_config(response_bytes: &[u8]) -> Option<Vec<u8>> {
 
 async fn upstream_for_ech(
     tls: Arc<TlsConfig>,
+    tcp: Arc<TcpConfig>,
     http2: Arc<Http2Config>,
     upstream: Arc<Option<String>>,
     cache: Arc<EchCache>,
@@ -184,12 +186,14 @@ async fn upstream_for_ech(
 ) -> Result<SslStream<TcpStream>> {
     let doh_domain_with_port = format!("{}:443", doh_domain);
 
-    let remote = match upstream_connect(doh_domain_with_port.as_str(), upstream.clone()).await? {
-        ConnectionStatus::Success(stream) => stream,
-        ConnectionStatus::Failure(reason) => {
-            return Err(anyhow::anyhow!("[TCP] Connection failure: {}", reason));
-        }
-    };
+    let remote =
+        match upstream_connect(doh_domain_with_port.as_str(), upstream.clone(), tcp.clone()).await?
+        {
+            ConnectionStatus::Success(stream) => stream,
+            ConnectionStatus::Failure(reason) => {
+                return Err(anyhow::anyhow!("[TCP] Connection failure: {}", reason));
+            }
+        };
 
     remote.set_nodelay(true)?;
 
@@ -197,6 +201,7 @@ async fn upstream_for_ech(
         remote,
         doh_domain,
         tls.clone(),
+        tcp.clone(),
         http2.clone(),
         false,
         upstream,

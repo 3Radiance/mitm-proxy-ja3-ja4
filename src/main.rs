@@ -4,6 +4,7 @@ mod h1_fingerprint;
 mod h2_fingerprint;
 mod logging;
 mod proxy;
+mod tcp_fingerprint;
 mod tls_fingerprint;
 
 use anyhow::Result;
@@ -36,6 +37,7 @@ pub struct ProxyConfig {
 #[derive(Clone)]
 pub struct Data {
     pub ca: Arc<MitmCa>,
+    pub tcp: Arc<TcpConfig>,
     pub tls: Arc<TlsConfig>,
     pub http2: Arc<Http2Config>,
     pub http1: Arc<Http1Config>,
@@ -47,6 +49,7 @@ impl Data {
     pub fn from_profile(profile: &ProfileConfig, ca: &Arc<MitmCa>, cache: &Arc<EchCache>) -> Self {
         Self {
             ca: Arc::clone(ca),
+            tcp: Arc::new(profile.tcp.clone()),
             tls: Arc::new(profile.tls.clone()),
             http2: Arc::new(profile.http2.clone()),
             http1: Arc::new(profile.http1.clone()),
@@ -85,11 +88,13 @@ async fn main() -> Result<()> {
         .max_capacity(10_000)
         .time_to_live(Duration::from_secs(3600))
         .build();
+
     let cache = Arc::new(EchCache {
         cache,
         inflight: Arc::new(Mutex::new(HashMap::new())),
     });
 
+    let tcp = Arc::new(config.tcp.clone());
     let default_data = Data::from_profile(config, &ca, &cache);
     let port = config.config.port;
 
@@ -104,8 +109,21 @@ async fn main() -> Result<()> {
             let merged = overlay.merge_into(config);
             domains.insert(pattern.clone(), Data::from_profile(&merged, &ca, &cache));
         }
-        tracing::info!("[CFG] Loaded {} domain profiles", domains.len());
+        crate::log_tag!(info, "CFG", "Loaded {} domain profiles", domains.len());
     }
+
+    let mut tcp_domains: HashMap<u32, Arc<TcpConfig>> = HashMap::new();
+    for (_, data) in domains.iter() {
+        if let Some(mark) = data.tcp.mark {
+            tcp_domains.insert(mark, Arc::clone(&data.tcp));
+        }
+    }
+    crate::log_tag!(
+        info,
+        "CFG",
+        "Loaded {} router domain marks",
+        tcp_domains.len()
+    );
 
     let router = Arc::new(crate::proxy::tcp::Router {
         default: default_data,
@@ -117,11 +135,61 @@ async fn main() -> Result<()> {
 
     tokio::spawn(async move { gc(inflight).await });
 
-    tracing::info!("[CFG] Loaded config: {:#?}", config);
+    crate::log_tag!(info, "CFG", "Loaded config: {}", path.display());
 
-    proxy::tcp::connection(data).await?;
+    let tcp_clone = Arc::clone(&tcp);
+    let tcp_domains_clone = tcp_domains.clone();
+    let tcp_clone_iptables = Arc::clone(&tcp);
+    let tcp_domains_clone_iptables = tcp_domains.clone();
+    let tcp_shutdown = Arc::clone(&tcp);
+    let tcp_domains_shutdown = tcp_domains.clone();
 
-    Ok(())
+    let nfqueue_on = config.tcp.mark.is_some();
+
+    if nfqueue_on {
+        if config.tcp.qnum_syn == config.tcp.qnum_tcp {
+            return Err(anyhow::anyhow!("qnum_syn and qnum_tcp must be different"));
+        }
+        tokio::spawn(async move { tcp_fingerprint::syn::start_qnum_syn(tcp, tcp_domains).await });
+
+        tokio::spawn(async move {
+            tcp_fingerprint::tcp::start_qnum_tcp(tcp_clone, tcp_domains_clone).await
+        });
+
+        if let Err(e) = tcp_fingerprint::iptables::apply_auto_iptables(
+            tcp_clone_iptables,
+            tcp_domains_clone_iptables,
+        ) {
+            crate::log_tag!(warn, "IPT", "auto iptables failed: {:#}", e);
+        }
+    }
+
+    let mut exit_code = 0;
+
+    tokio::select! {
+        res = proxy::tcp::connection(data) => {
+            if let Err(e) = res {
+                crate::log_tag!(error, "TCP", "listener exited: {:#}", e);
+                exit_code = 1;
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            crate::log_tag!(info, "Runtime", "Ctrl+C received, shutting down...");
+            exit_code = 1;
+        }
+    }
+
+    if nfqueue_on {
+        if let Err(e) =
+            tcp_fingerprint::iptables::remove_auto_iptables(tcp_shutdown, tcp_domains_shutdown)
+        {
+            crate::log_tag!(warn, "IPT", "iptables cleanup failed: {:#}", e);
+        } else {
+            crate::log_tag!(info, "IPT", "iptables rules removed");
+        }
+    }
+
+    std::process::exit(exit_code);
 }
 
 async fn gc(inflight: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>) {

@@ -1,8 +1,34 @@
-## HTTP/2 Fingerprinting (Akamai)
+# HTTP/2 Fingerprint Spoofing (Akamai)
 
-HTTP/2 fingerprinting is fully configurable through the `http2` section of the JSON profile. The configuration controls the connection preface behavior, SETTINGS frame, stream priorities, header ordering, `END_STREAM` placement, and HTTP header manipulation.
+[English](HTTP2.md) | [Русский](HTTP2.ru.md)
 
-Example:
+HTTP/2 fingerprinting (the Akamai-style hash over SETTINGS, window
+sizes, priorities and header order) is fully configurable through the
+`http2` section of the JSON profile. The proxy shapes the **upstream**
+connection — preface, SETTINGS frame, stream priorities, header order —
+while the browser-facing side just accepts what the client offers
+(`src/h2_fingerprint/`).
+
+## Connection flow
+
+```
+browser ──h2 handshake──▶ proxy ──h2 handshake (profiled)──▶ upstream
+browser ──HEADERS───────▶ proxy ──HEADERS (reordered)──────▶ upstream
+```
+
+`handle_h2` runs both handshakes concurrently with a 5-second timeout
+each: a plain server handshake toward the client, and a profiled client
+handshake toward upstream built by `build_upstream_h2_builder`. Every
+request is then rebuilt through `apply_http_headers` (order + values)
+and sent upstream with the configured priority and `END_STREAM`
+placement; bodies stream without buffering, trailers included.
+
+If the upstream connection drops mid-request, the proxy reconnects
+(`upstream_reconnect`, with the same TCP/TLS/HTTP2 profile — marked
+socket included) and aborts on ALPN mismatch, so a reconnect can never
+silently downgrade `h2` to `http/1.1`.
+
+## Configuration (`http2` block)
 
 ```json
 "http2": {
@@ -10,73 +36,49 @@ Example:
         "header_table_size": 65536,
         "enable_push": false,
         "max_concurrent_streams": null,
-        "initial_window_size": 131072,
+        "initial_window_size": 6291456,
         "max_frame_size": 16384,
         "max_header_list_size": null
     },
-
-    "settings_order": [
-        "HEADER_TABLE_SIZE",
-        "ENABLE_PUSH",
-        "INITIAL_WINDOW_SIZE",
-        "MAX_FRAME_SIZE"
-    ],
-
-    "connection_window_update": 12582912,
-
+    "settings_order": ["HEADER_TABLE_SIZE", "ENABLE_PUSH", "INITIAL_WINDOW_SIZE", "MAX_FRAME_SIZE"],
+    "connection_window_update": 15663105,
     "initial_stream_id": null,
-
     "priority_frames": null,
-
-    "headers_priority": {
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 41
-    },
-
-    "end_stream_on_headers": false,
-
-    "pseudo_headers_order": [
-        ":method",
-        ":path",
-        ":authority",
-        ":scheme"
-    ],
-
-    "headers_order": [
-        "user-agent",
-        "accept-language"
-    ],
-
+    "headers_priority": { "exclusive": true, "depends_on": 0, "weight": 255 },
+    "end_stream_on_headers": true,
+    "pseudo_headers_order": [":method", ":authority", ":scheme", ":path"],
+    "headers_order": null,
     "http_headers": {
-        "user-agent": "Mozilla/5.0",
+        "user-agent": "Mozilla/5.0 (...)",
         "accept-language": "en-US,en;q=0.6"
     }
 }
 ```
 
-### SETTINGS
+### `settings` — SETTINGS frame values
 
-The `settings` object controls the values advertised in the HTTP/2 `SETTINGS` frame.
+Values advertised in the upstream SETTINGS frame (`set_settings_frame`).
+`null` omits the parameter entirely; `enable_push` is a plain bool and
+always sent:
 
-Supported fields:
+| Field | Meaning |
+|---|---|
+| `header_table_size` | HPACK dynamic table size. `null` = omit. |
+| `enable_push` | Server push on/off. Always emitted. |
+| `max_concurrent_streams` | Max concurrently active streams. `null` = omit. |
+| `initial_window_size` | Per-stream flow-control window. |
+| `max_frame_size` | Max frame payload size. |
+| `max_header_list_size` | Max header list size. `null` = omit. |
 
-* `header_table_size` — HPACK dynamic table size. Use `null` to omit the setting.
-* `enable_push` — enables or disables HTTP/2 server push.
-* `max_concurrent_streams` — maximum number of concurrently active streams. Use `null` to omit the setting.
-* `initial_window_size` — initial flow-control window size for streams.
-* `max_frame_size` — maximum HTTP/2 frame payload size.
-* `max_header_list_size` — maximum header list size. Use `null` to omit the setting.
+If the whole `settings` object is missing, no values are customized and
+the client's defaults apply.
 
-The values are sent according to `settings_order`.
+### `settings_order` — SETTINGS parameter order
 
-### SETTINGS order
+Order of parameters in the outgoing SETTINGS frame. Only parameters
+present in `settings` are emitted, in exactly this order:
 
-`settings_order` controls the order of individual SETTINGS parameters in the outgoing SETTINGS frame.
-
-Supported values:
-
-```text
+```
 HEADER_TABLE_SIZE
 ENABLE_PUSH
 MAX_CONCURRENT_STREAMS
@@ -85,250 +87,100 @@ MAX_FRAME_SIZE
 MAX_HEADER_LIST_SIZE
 ```
 
-Only settings present in the configuration are emitted.
+Unknown names are a handshake-time error — the order list is validated
+when the builder is created, so a typo fails fast on the first `h2`
+connection instead of silently producing a wrong fingerprint.
 
-For example:
+### `connection_window_update` — connection window
 
-```json
-"settings_order": [
-    "HEADER_TABLE_SIZE",
-    "ENABLE_PUSH",
-    "INITIAL_WINDOW_SIZE",
-    "MAX_FRAME_SIZE"
-]
-```
+`initial_connection_window_size` for the upstream connection: the
+connection-level flow-control window, independent from the per-stream
+`initial_window_size`. `null` (or missing) leaves the client's default.
+Real browsers use distinctive large values here (e.g. `15663105` for
+Firefox), so this field matters more than it looks.
 
-produces the configured settings in exactly that order.
+### `initial_stream_id` — first request stream
 
-### Connection window update
+Explicit first client-initiated stream ID. When `null`, it is derived:
 
-`connection_window_update` controls the connection-level `WINDOW_UPDATE` increment sent after the HTTP/2 connection is established.
+- no priority frames → `1`;
+- with priority frames → highest configured priority `stream_id` + 2
+  (priority frames occupy stream IDs before the first real request).
 
-For example:
+When setting it manually alongside `priority_frames`, pick an unused odd
+ID past them — a collision breaks the connection.
 
-```json
-"connection_window_update": 12582912
-```
+### `priority_frames` — pre-request PRIORITY frames
 
-This controls the connection flow-control window independently from the per-stream `initial_window_size`.
-
-### Initial stream ID
-
-`initial_stream_id` controls the first client-initiated HTTP/2 stream ID.
-
-If `initial_stream_id` is set explicitly, that value is used.
-
-If it is `null`, the value is calculated automatically:
-
-* without priority frames, the initial stream ID is `1`;
-* with priority frames, the initial stream ID is calculated as the highest configured priority stream ID plus `2`.
-
-For example, if the configured priority streams are:
+PRIORITY frames sent before normal request streams (the classic
+Firefox/Chrome priority tree signal):
 
 ```json
 "priority_frames": [
-    {
-        "stream_id": 1,
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 41
-    },
-    {
-        "stream_id": 3,
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 42
-    }
+    { "stream_id": 1, "exclusive": false, "depends_on": 0, "weight": 41 },
+    { "stream_id": 3, "exclusive": false, "depends_on": 0, "weight": 42 }
 ]
 ```
 
-the initial stream ID is automatically calculated as `5`.
+| Field | Meaning |
+|---|---|
+| `stream_id` | Stream the priority definition attaches to (client streams are odd). |
+| `exclusive` | Whether the dependency is exclusive. |
+| `depends_on` | Parent stream ID (`0` = connection root). |
+| `weight` | Priority weight (1–256 on the wire; config uses the raw value). |
 
-This is important because HTTP/2 priority frames can occupy stream IDs before the first actual request stream. When priority frames are configured, do not manually set an initial stream ID that conflicts with those streams.
+`null` or empty = no priority frames. With the example above and
+`initial_stream_id: null`, the first request stream is auto-selected as
+`5`.
 
-When setting `initial_stream_id` manually together with `priority_frames`, make sure that it is an appropriate unused client stream ID and follows the HTTP/2 stream ID rules.
+### `headers_priority` — HEADERS stream dependency
 
-### Priority frames
-
-`priority_frames` is an array of HTTP/2 priority definitions that are sent before normal request streams.
-
-Each entry contains:
-
-```json
-{
-    "stream_id": 1,
-    "exclusive": false,
-    "depends_on": 0,
-    "weight": 41
-}
-```
-
-Fields:
-
-* `stream_id` — stream ID associated with the priority definition. Client-initiated streams use odd stream IDs.
-* `exclusive` — whether the dependency becomes exclusive.
-* `depends_on` — parent stream ID.
-* `weight` — stream priority weight.
-
-Example:
+Priority attached to each request HEADERS stream
+(`headers_stream_dependency`):
 
 ```json
-"priority_frames": [
-    {
-        "stream_id": 1,
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 41
-    },
-    {
-        "stream_id": 3,
-        "exclusive": false,
-        "depends_on": 0,
-        "weight": 42
-    }
-]
+"headers_priority": { "exclusive": true, "depends_on": 0, "weight": 255 }
 ```
 
-When priority frames are configured and `initial_stream_id` is `null`, the proxy automatically selects the next available odd stream ID after the highest configured priority stream.
+Same fields as priority frames, minus `stream_id`. `null` = no custom
+dependency — the HEADERS goes out with defaults.
 
-### Header priority
+### `end_stream_on_headers` — END_STREAM placement
 
-`headers_priority` controls the priority associated with the request HEADERS stream.
+Where `END_STREAM` goes for requests **without** a body:
 
-Example:
+- `true` → `HEADERS + END_STREAM` (Firefox style);
+- `false` → `HEADERS` then `DATA(length=0) + END_STREAM` (Chrome style).
+
+Requests **with** a body always close on the final DATA frame — this flag
+doesn't move that. The flag only fires when the incoming request itself
+is end-of-stream, so it reshapes rather than invents stream closure.
+
+### `pseudo_headers_order` — pseudo-header order
+
+Order of `:method`, `:path`, `:authority`, `:scheme` in outgoing
+requests. Unknown names fail the builder (fail fast, same as settings).
+Browsers differ here characteristically — Firefox sends
+`:method, :authority, :scheme, :path` — so copy the target, don't
+improvise:
 
 ```json
-"headers_priority": {
-    "exclusive": false,
-    "depends_on": 0,
-    "weight": 41
-}
+"pseudo_headers_order": [":method", ":authority", ":scheme", ":path"]
 ```
 
-Fields have the same meaning as priority frames:
+### `headers_order` + `http_headers` — headers
 
-* `exclusive`
-* `depends_on`
-* `weight`
+Two-stage pipeline (`apply_http_headers`):
 
-Set `headers_priority` to `null` when no custom header priority is required.
-
-### END_STREAM on request HEADERS
-
-`end_stream_on_headers` controls where `END_STREAM` is placed for requests that have no body.
-
-When set to `true`:
-
-```text
-HEADERS + END_STREAM
-```
-
-is used for an empty request.
-
-When set to `false`:
-
-```text
-HEADERS
-DATA(length=0) + END_STREAM
-```
-
-is used instead.
-
-For requests that contain a body, `END_STREAM` is sent on the final DATA frame and this option does not move it to the initial HEADERS frame.
-
-This allows the HTTP/2 frame sequence to be matched to different client fingerprints.
-
-### Pseudo-header order
-
-`pseudo_headers_order` controls the order of HTTP/2 pseudo-headers in outgoing requests.
-
-Supported pseudo-headers:
-
-```text
-:method
-:path
-:authority
-:scheme
-```
-
-Example:
+1. Walk `headers_order`; for each name take the value from
+   `http_headers` if configured (`"value"` = replace, `null` = remove),
+   otherwise copy the incoming values through untouched.
+2. Append configured headers not mentioned in the order (replacements
+   only — `null` entries are skipped).
+3. Append every remaining incoming header not seen yet.
 
 ```json
-"pseudo_headers_order": [
-    ":method",
-    ":path",
-    ":authority",
-    ":scheme"
-]
-```
-
-The configured order is preserved when constructing the outgoing request.
-
-### HTTP header order
-
-`headers_order` controls the order of normal HTTP request headers.
-
-Example:
-
-```json
-"headers_order": [
-    "user-agent",
-    "accept-language",
-    "accept-encoding",
-    "referer"
-]
-```
-
-Headers listed here are processed in exactly this order.
-
-### HTTP header modification
-
-`http_headers` controls the values of individual HTTP headers.
-
-A configured string value replaces the incoming value:
-
-```json
-"http_headers": {
-    "user-agent": "Mozilla/5.0"
-}
-```
-
-A header can be removed by setting its value to `null`:
-
-```json
-"http_headers": {
-    "referer": null
-}
-```
-
-Headers can also be added even when they were not present in the original request:
-
-```json
-"http_headers": {
-    "priority": "u=0, i"
-}
-```
-
-Headers that are not mentioned in `http_headers` are preserved from the incoming request.
-
-This makes it possible to:
-
-* replace existing headers;
-* remove headers;
-* add new headers;
-* preserve unspecified incoming headers;
-* control the final header ordering through `headers_order`.
-
-For example:
-
-```json
-"headers_order": [
-    "user-agent",
-    "accept",
-    "accept-language",
-    "priority"
-],
-
+"headers_order": ["user-agent", "accept", "accept-language", "priority"],
 "http_headers": {
     "user-agent": "Mozilla/5.0",
     "accept-language": "en-US,en;q=0.6",
@@ -337,34 +189,52 @@ For example:
 }
 ```
 
-In this configuration:
+Result: `user-agent` replaced, `accept-language` replaced, `priority`
+added (Chrome's modern hint header), `referer` removed, `accept` passed
+through from the browser, everything in the listed order. Headers absent
+from both lists pass through in arrival order at the end. `null` for
+both fields = byte-transparent passthrough.
 
-* `user-agent` is replaced;
-* `accept-language` is replaced;
-* `priority` is added;
-* `referer` is removed;
-* `accept` is preserved from the incoming request;
-* the resulting headers follow the configured order.
+### Streaming and trailers
 
-### HTTP/2 request and response streaming
-
-Request and response bodies are forwarded as streaming data rather than buffering the complete body in memory.
-
-The proxy also preserves HTTP/2 trailing headers (trailers). When trailers are present, the final DATA frame does not carry `END_STREAM`; the trailing HEADERS frame closes the stream instead.
-
-Without trailers:
+Bodies stream in both directions — no full-body buffering. Trailer
+handling follows the frames: with trailers the final DATA carries no
+`END_STREAM`; the trailing HEADERS closes the stream:
 
 ```text
-HEADERS
-DATA
-DATA + END_STREAM
+HEADERS → DATA → DATA + END_STREAM          (no trailers)
+HEADERS → DATA → DATA → TRAILERS + END_STREAM (trailers)
 ```
 
-With trailers:
+## ALPS coupling
 
-```text
-HEADERS
-DATA
-DATA
-TRAILERS + END_STREAM
-```
+When `tls.alps` is `true`, the same `settings` + `settings_order` are
+re-encoded as the TLS ALPS payload for `h2` (see `TLS.md`) — browsers
+use that exact encoding, so one config drives both wire locations.
+Keep them in sync with the target browser; a mismatch between the
+SETTINGS frame and the ALPS payload is itself a fingerprint signal.
+
+## Per-domain HTTP/2 (`-d domain.json`)
+
+Any `http2` field can be overridden per domain pattern; `settings` ITS
+sub-fields merge individually, everything else follows the standard
+inherit-or-override rule (`null` resets). Since the builder is created
+per upstream connection from the resolved profile, different domains
+can present completely different Akamai hashes through one proxy
+instance — pair with Multi-Account Containers on the browser side.
+
+## Gotchas
+
+- `settings_order`, `pseudo_headers_order` entries are validated —
+  unknown names error the connection instead of degrading silently.
+  Double-check spelling against the vocabularies above.
+- `settings` values outside the protocol range (e.g. absurd
+  `max_frame_size`) are rejected by the HTTP/2 stack at handshake time.
+- `initial_stream_id` colliding with `priority_frames` IDs kills the
+  connection — prefer `null` and let it derive.
+- `end_stream_on_headers` only reshapes empty requests; bodied requests
+  are unaffected by design.
+- The browser-facing handshake is generic — the fingerprint you
+  configure is what the **upstream** (and any checker behind it) sees.
+  Validate with `tls.peet.ws`-style checkers through the proxy, not
+  against the proxy's local port.

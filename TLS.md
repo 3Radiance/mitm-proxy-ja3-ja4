@@ -1,24 +1,87 @@
-## Supported Cipher Suites
+# TLS Fingerprint Spoofing (JA3/JA4)
 
-BoringSSL keeps TLS 1.3 and TLS 1.2 cipher suites as two separate internal
-lists — they can never be interleaved in a config, and BoringSSL will always
-group them as two contiguous blocks (TLS 1.3 first, then TLS 1.2) regardless
-of the order they appear in `cipher_suites`. This matches how real browsers
-build their ClientHello, so it isn't a limitation you need to work around.
+[English](TLS.md) | [Русский](TLS.ru.md)
 
-Naming also differs between the two: TLS 1.3 suites use IANA-style
-`TLS_<AEAD>_<HASH>` names, while TLS 1.2 suites must be passed using
-OpenSSL-style short names (`ECDHE-ECDSA-AES128-GCM-SHA256`) — the
-`TLS_ECDHE_..._WITH_...` long form is **not** accepted for TLS 1.2 suites.
+The upstream TLS connection is built entirely from the JSON profile:
+every byte of the ClientHello that fingerprinting sees — cipher order,
+extensions and their order, curves, signature algorithms, ALPN, GREASE,
+compression, ECH — is caller-controlled. The stack is BoringSSL via
+`btls` / `tokio-btls` (`src/tls_fingerprint/`).
 
-### TLS 1.3
+## Connection flow
+
+```
+browser ──ClientHello──▶ proxy
+                            1. parse CONNECT, extract SNI/host
+                            2. route profile by SNI (base or domain overlay)
+                            3. open upstream TCP (marked socket, see TCP.md)
+                            4. TLS handshake upstream FIRST, with the profile
+                            5. take upstream's ALPN, build client-side acceptor
+browser ◀──ServerHello (forged cert, upstream's ALPN)── proxy
+```
+
+Upstream-first matters: the ALPN the real server selects dictates which
+client-side handshake the browser gets, so the browser can never negotiate
+a protocol the upstream connection doesn't speak. The client side uses a
+`mozilla_intermediate` acceptor with an on-the-fly certificate (`rcgen`,
+signed by the local CA, cached in `moka`) and an ALPN select callback
+replaying the upstream's choice (defaulting to `http/1.1`).
+
+The upstream `SslConnector` is assembled in
+`create_ssl_acceptor_upstream` (`src/tls_fingerprint/tls.rs`) in this
+order: cipher suites → ALPN → curves → signature algorithms → record
+size limit → certificate compression → GREASE → extension
+permutation/order → OCSP → SCT → session ticket → delegated credentials
+→ extension order → ALPS → ECH. Verification uses the Chromium root
+store. Handshake timeout is 5 seconds.
+
+## Configuration (`tls` block)
+
+```json
+"tls": {
+    "cipher_suites": ["TLS_AES_128_GCM_SHA256", "ECDHE-RSA-AES128-GCM-SHA256", "..."],
+    "alpn": ["h2", "http/1.1"],
+    "curves": ["X25519", "P-256", "P-384"],
+    "signature_algorithms": ["ecdsa_secp256r1_sha256", "rsa_pss_rsae_sha256", "..."],
+    "extensions_order": null,
+    "cert_compression": ["brotli"],
+    "permute_extensions": false,
+    "status_request": false,
+    "signed_certificate_timestamp": false,
+    "alps": false,
+    "session_ticket": false,
+    "grease_enabled": false,
+    "enable_ech": true,
+    "enable_ech_grease": false,
+    "delegated_credentials": null,
+    "record_size_limit": null,
+    "doh": ["dns.google"]
+}
+```
+
+### `cipher_suites` — strict order, two blocks
+
+The list is joined with `:` and passed to `set_cipher_list`, with
+`set_preserve_tls13_cipher_list(true)` so your order survives verbatim.
+BoringSSL keeps TLS 1.3 and TLS 1.2 suites as two separate internal
+lists — they can never be interleaved, and BoringSSL always emits them
+as two contiguous blocks (TLS 1.3 first, then TLS 1.2) regardless of how
+they are mixed in the config. Real browsers build their ClientHello the
+same way, so this is not a limitation to work around.
+
+Naming differs per version: TLS 1.3 suites use IANA-style
+`TLS_<AEAD>_<HASH>` names, TLS 1.2 suites must use OpenSSL-style short
+names (`ECDHE-ECDSA-AES128-GCM-SHA256`) — the `TLS_ECDHE_..._WITH_...`
+long form is **not** accepted for TLS 1.2.
+
+TLS 1.3:
 ```
 TLS_AES_128_GCM_SHA256
 TLS_AES_256_GCM_SHA384
 TLS_CHACHA20_POLY1305_SHA256
 ```
 
-### TLS 1.2
+TLS 1.2:
 ```
 ECDHE-ECDSA-AES128-GCM-SHA256
 ECDHE-ECDSA-AES256-GCM-SHA384
@@ -43,9 +106,15 @@ ECDHE-PSK-AES256-CBC-SHA
 ECDHE-PSK-CHACHA20-POLY1305
 ```
 
-## Supported Curves
+### `alpn` — protocol list
 
-Full list (BoringSSL):
+Joined into length-prefixed wire format (`encode_alpn_wire`) and offered
+to the server. The server's choice is what the whole connection — and the
+client-side handshake — ends up speaking.
+
+### `curves` — supported groups, in order
+
+Passed to `set_curves_list`. Full BoringSSL vocabulary:
 ```
 P-256
 P-384
@@ -56,9 +125,9 @@ X25519MLKEM768
 MLKEM1024
 ```
 
-## Supported Signature Algorithms
+### `signature_algorithms` — in order
 
-Full list (BoringSSL):
+Passed to `set_sigalgs_list`. Full vocabulary:
 ```
 rsa_pkcs1_md5_sha1
 rsa_pkcs1_sha1
@@ -75,31 +144,19 @@ rsa_pss_rsae_sha512
 ed25519
 ```
 
-## Supported Certificate Compression Algorithms
+### `extensions_order` — exact extension positions
 
-The `cert_compression` field accepts a list of algorithm names. Each one is
-backed by a real decompressor (not a stub), so the handshake completes
-correctly if the server actually sends a compressed certificate using one
-of them:
-```
-brotli
-zlib
-zstd
-```
+Controls the position of each TLS extension in the outgoing ClientHello
+(`set_extension_permutation` under the hood). Every extension that is
+actually active in the handshake — enabled via `cipher_suites`, `curves`,
+`signature_algorithms`, `alpn`, `cert_compression`, `record_size_limit`,
+etc. — should be listed here. **If an active extension is left out, its
+resulting position is undefined** — not guaranteed dropped, appended, or
+placed anywhere specific; upstream documents nothing here. Always list
+everything you enable.
 
-## Supported Extension Order Values
+Supported names (several accept aliases):
 
-The `extensions_order` field controls the position of each TLS extension in
-the outgoing ClientHello (`SSL_CTX_set_extension_order` under the hood).
-Every extension that is actually active in the handshake — enabled through
-`cipher_suites`, `curves`, `signature_algorithms`, `alpn`, `cert_compression`,
-`record_size_limit`, etc. — should be listed here. **If an active extension
-is left out of `extensions_order`, its resulting position is undefined** —
-it is not guaranteed to be dropped, appended, or placed anywhere specific,
-and behavior isn't documented upstream. Always include every extension you
-enable.
-
-Full list of supported names:
 ```
 server_name
 status_request
@@ -133,91 +190,145 @@ channel_id
 record_size_limit
 ```
 
-## TLS Boolean Toggles
+`renegotiation_info` (RFC 5746) is not toggleable and needs no toggle —
+BoringSSL always sends it like every modern browser; it only needs a
+position in this list.
 
-A handful of extensions are controlled by a single `bool` in `TlsConfig`
-rather than a list or an order — either the extension/behavior is present,
-or it isn't:
+### `cert_compression` — with real decompressors
 
-- **`permute_extensions`** — randomizes the order of TLS extensions on
-  every handshake, matching Chrome's behavior (`SSL_CTX_set_permute_extensions`
-  under the hood). **Do not combine this with a populated `extensions_order`**
-  — the two express contradictory intents (a fixed, caller-chosen order vs.
-  a random one on every handshake) and only one should be set per profile.
-  Chrome-style profiles use `permute_extensions: true` with GREASE and no
-  fixed order; Firefox-style profiles use a fixed `extensions_order` and
-  leave this `false`.
-- **`status_request`** — enables OCSP stapling (the `status_request`
-  extension). Real browsers send this by default.
-- **`signed_certificate_timestamp`** — enables the Certificate Transparency
-  SCT extension. Also on by default in real browsers.
-- **`session_ticket`** — controls whether the `session_ticket` extension is
-  sent at all (`SSL_OP_NO_TICKET` under the hood). Since each upstream
-  connection is established fresh rather than reusing a cached session, this
-  only affects whether the extension is *present* in the ClientHello for
-  fingerprinting purposes — it does not enable real session resumption.
-- **`alps`** — enables Application-Layer Protocol Settings (ALPS). When on,
-  the proxy sends an ALPS payload for the `h2` protocol built from the same
-  `settings` / `settings_order` fields used for the real HTTP/2 SETTINGS
-  frame (see `HTTP2.md`) — real browsers use this exact same encoding for
-  the ALPS payload, so no separate configuration is needed. If `settings`
-  is empty, an empty ALPS payload is sent.
+Each name registers a working decompressor, so the handshake completes
+even if the server actually sends a compressed certificate with it:
 
-## A note on `renegotiation_info`
+```
+brotli
+zlib
+zstd
+```
 
-The `renegotiation_info` extension (RFC 5746, Secure Renegotiation
-Indication) is not user-toggleable and doesn't need to be — BoringSSL always
-sends it as a baseline security measure, the same way every modern browser
-does. It only needs a position in `extensions_order`; there's nothing to
-enable or disable.
+Unknown names are a hard error, not a silent skip.
+
+### Boolean toggles
+
+- **`permute_extensions`** — randomizes extension order on every
+  handshake (Chrome behavior). **Never combine with a populated
+  `extensions_order`** — fixed caller-chosen order vs. random order are
+  contradictory intents; one per profile. Chrome-style: `true` + GREASE,
+  no fixed order. Firefox-style: fixed order, `false`.
+- **`grease_enabled`** — injects GREASE values (random unknown cipher /
+  extension codepoints). Browsers do this to keep middleboxes honest;
+  JA3/JA4 hashes normally normalize GREASE away, so it changes the wire
+  bytes without changing the hash.
+- **`status_request`** — OCSP stapling. Sent by real browsers by default.
+- **`signed_certificate_timestamp`** — Certificate Transparency SCT
+  extension. Also default-on in real browsers.
+- **`session_ticket`** — whether the `session_ticket` extension is sent
+  (`NO_TICKET` option cleared/set). Each upstream connection is fresh, so
+  this only controls the extension's *presence* for fingerprinting — no
+  real session resumption happens.
+- **`alps`** — Application-Layer Protocol Settings. Sends an ALPS payload
+  for `h2` encoded from the same `http2.settings` / `settings_order`
+  used for the real HTTP/2 SETTINGS frame (see `HTTP2.md`) — browsers use
+  that exact encoding, so no separate config exists. Empty `settings`
+  means an empty ALPS payload.
+
+### `delegated_credentials` — opt-in extension
+
+List of signature-scheme names (same vocabulary as
+`signature_algorithms`), enables the `delegated_credentials` extension.
+`null` = extension absent.
+
+### `record_size_limit` — int or `null`
+
+Advertises the maximum TLS record size the client accepts
+(`record_size_limit` extension). `null` = extension absent.
+
+### `doh` — resolvers for ECH lookup
+
+Hostnames of DoH resolvers (e.g. `["dns.google"]`), picked at random per
+lookup. Used only when `enable_ech` is `true`. See below.
 
 ## Encrypted Client Hello (ECH)
 
-ECH is controlled by two **independent** booleans in `TlsConfig`:
+Two **independent** booleans:
 
-- **`enable_ech`** — turns ECH resolution on at all. When `true`, the proxy
-  looks up a real ECH config for the upstream host and, if one is found,
-  encrypts the inner ClientHello with it (`SSL_set1_ech_config_list` under
-  the hood). When `false`, no lookup happens — the proxy goes straight to
-  the `enable_ech_grease` check below.
-- **`enable_ech_grease`** — controls whether ECH GREASE is sent as a
-  fallback whenever a real config isn't used. This applies in **two**
-  cases: when `enable_ech` is `false` (no lookup attempted at all), and
-  when `enable_ech` is `true` but no config was found for that particular
-  host. In both cases, if `enable_ech_grease` is `true`, the proxy sends a
-  GREASE ECH extension (`SSL_set_enable_ech_grease`) instead — matching
-  real browsers, which send this extension on every handshake regardless
-  of whether the destination actually supports ECH.
-
-This gives four real combinations, matching different browser behaviors:
+- **`enable_ech`** — resolve a real ECH config at all. When `true`, the
+  proxy looks one up per upstream host and encrypts the inner ClientHello
+  with it. When `false`, no lookup happens.
+- **`enable_ech_grease`** — send ECH GREASE as fallback whenever no real
+  config is used — both when `enable_ech` is `false` and when it is
+  `true` but no config was found for that host. Real browsers send this
+  on every handshake either way.
 
 | `enable_ech` | `enable_ech_grease` | Behavior |
 |---|---|---|
 | `false` | `false` | No ECH extension at all. |
-| `false` | `true` | Always GREASE — never look up a real config. |
-| `true` | `false` | Real ECH when a config exists; nothing when it doesn't. |
-| `true` | `true` | Real ECH when a config exists; GREASE when it doesn't — matches real Chrome/Firefox behavior on the open web, where most hosts don't publish a config yet. |
+| `false` | `true` | Always GREASE, never look anything up. |
+| `true` | `false` | Real ECH where published; nothing elsewhere. |
+| `true` | `true` | Real ECH where published; GREASE elsewhere — matches real Chrome/Firefox on the open web. |
 
-### How the real config is resolved
+How the real config is resolved (only when `enable_ech` is `true`):
 
-When `enable_ech` is `true`, the config is looked up live via DoH:
+1. Pick a random resolver from `doh`, so repeat lookups spread across
+   resolvers.
+2. Query the target host's **HTTPS (SVCB) record** and read the `ech`
+   parameter, if present.
+3. **The DoH request goes through the proxy's own fingerprinting stack**
+   — a full TLS + HTTP/2 connection built with the same profile. It
+   never attempts ECH resolution for itself (that would recurse).
+4. **With `upstream_proxy` set, DoH is routed through it too** — no
+   direct-to-internet path exists, so ECH lookups can't leak the target
+   host to local-network observers.
+5. Result (config bytes or absence) is cached per domain for one hour
+   (`moka`, up to 10,000 entries).
 
-1. Pick a random resolver from `doh` (a list of hostnames, e.g.
-   `["dns.google"]`), so repeated lookups aren't all sent to the same
-   resolver.
-2. Query it for the target host's **HTTPS (SVCB) record** and read the
-   `ech` (`SvcParamKey::EchConfigList`) parameter out of the answer, if
-   present.
-3. **The DoH request itself goes through the proxy's own fingerprinting
-   stack** — it's a full TLS + HTTP/2 connection built with
-   `create_ssl_acceptor_upstream`, using the same `TlsConfig` /
-   `Http2Config` profile as regular traffic. It does **not** attempt ECH
-   resolution for itself (that would recurse), but otherwise looks like
-   any other upstream connection the proxy makes.
-4. **If `upstream_proxy` is set, the DoH request is routed through it too**
-   — there is no separate direct-to-internet path for DNS resolution, so
-   ECH lookups can't leak the destination host to anyone monitoring the
-   machine's network traffic outside of the configured proxy.
-5. The result (the config bytes, or the fact that none was found) is
-   cached per-domain for one hour (`moka`, up to 10,000 entries), so
-   repeat visits to the same host don't re-query DoH every time.
+## JA3 / JA4 notes
+
+- JA3 hashes the ordered cipher list, extensions list, curves and point
+  formats — all four are profile-controlled here (point formats ride
+  along with the BoringSSL defaults for the chosen curves).
+- JA4 additionally folds in ALPN, SNI presence (`server_name` position in
+  `extensions_order`), and counts — same story.
+- GREASE codepoints are stripped by the hashers before hashing, so
+  `grease_enabled` / `enable_ech_grease` affect middlebox behavior, not
+  the hash.
+
+## Per-domain TLS (`-d domain.json`)
+
+Any `tls` field can be overridden per domain pattern; unspecified fields
+inherit the base profile, `"field": null` resets a list to absent. Useful
+for fingerprint-sensitive checkers (weaker cipher subset, no ECH) or for
+hosts that break under a particular extension:
+
+```json
+{
+    "browserleaks.com": {
+        "config": { "upstream_proxy": null },
+        "tls": {
+            "cipher_suites": [
+                "TLS_AES_128_GCM_SHA256",
+                "TLS_AES_256_GCM_SHA384",
+                "ECDHE-ECDSA-AES128-GCM-SHA256",
+                "ECDHE-RSA-AES128-GCM-SHA256",
+                "TLS_RSA_WITH_AES_256_CBC_SHA"
+            ],
+            "enable_ech": false
+        }
+    }
+}
+```
+
+## Gotchas
+
+- TLS 1.2 suites in `TLS_..._WITH_...` long form are rejected — use the
+  short OpenSSL names. TLS 1.3 suites use the `TLS_...` IANA names.
+  Mixing the conventions up is the most common config error.
+- `extensions_order` must list **every** active extension, or positions
+  are undefined. When in doubt, capture a real browser Hello
+  (e.g. via `tls.peet.ws` or Wireshark) and mirror it.
+- `permute_extensions: true` + populated `extensions_order` =
+  contradictory config. Pick one.
+- `cert_compression` with an unknown name fails the connection at build
+  time — loud, not silent.
+- ECH lookups cost one DoH round-trip per unseen host (then cached);
+  `enable_ech: true` with an unreachable resolver stalls handshakes to
+  its timeout.

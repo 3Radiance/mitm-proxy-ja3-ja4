@@ -24,35 +24,39 @@ pub struct PartialConfig {
 #[derive(Debug, Deserialize, Clone, Default)]
 #[allow(dead_code)]
 pub struct PartialTcpConfig {
-    #[serde(default)]
-    pub ttl: Option<u8>,
-    #[serde(default)]
-    pub window_size: Option<u32>,
-    #[serde(default)]
-    pub mss: Option<u16>,
-    #[serde(default)]
-    pub window_scale: Option<u8>,
+    #[serde(default, deserialize_with = "deserialize_some_hex_or_int")]
+    pub mark: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub ttl: Option<Option<u8>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub window_size: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub mss: Option<Option<u16>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub window_scale: Option<Option<u8>>,
     #[serde(default)]
     pub dont_fragment: Option<bool>,
     #[serde(default)]
-    pub tcp_options_order: Option<Vec<String>>,
+    pub timestamp: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub tcp_options_order: Option<Option<Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
 #[allow(dead_code)]
 pub struct PartialTlsConfig {
-    #[serde(default)]
-    pub cipher_suites: Option<Vec<String>>,
-    #[serde(default)]
-    pub alpn: Option<Vec<String>>,
-    #[serde(default)]
-    pub curves: Option<Vec<String>>,
-    #[serde(default)]
-    pub signature_algorithms: Option<Vec<String>>,
-    #[serde(default)]
-    pub extensions_order: Option<Vec<String>>,
-    #[serde(default)]
-    pub cert_compression: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub cipher_suites: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub alpn: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub curves: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub signature_algorithms: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub extensions_order: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub cert_compression: Option<Option<Vec<String>>>,
     #[serde(default)]
     pub permute_extensions: Option<bool>,
     #[serde(default)]
@@ -69,61 +73,63 @@ pub struct PartialTlsConfig {
     pub enable_ech: Option<bool>,
     #[serde(default)]
     pub enable_ech_grease: Option<bool>,
-    #[serde(default)]
-    pub record_size_limit: Option<u16>,
-    #[serde(default)]
-    pub doh: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub delegated_credentials: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub record_size_limit: Option<Option<u16>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub doh: Option<Option<Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
 #[allow(dead_code)]
 pub struct PartialSettings {
-    #[serde(default)]
-    pub header_table_size: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub header_table_size: Option<Option<u32>>,
     #[serde(default)]
     pub enable_push: Option<bool>,
-    #[serde(default)]
-    pub max_concurrent_streams: Option<u32>,
-    #[serde(default)]
-    pub initial_window_size: Option<u32>,
-    #[serde(default)]
-    pub max_frame_size: Option<u32>,
-    #[serde(default)]
-    pub max_header_list_size: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub max_concurrent_streams: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub initial_window_size: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub max_frame_size: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub max_header_list_size: Option<Option<u32>>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
 #[allow(dead_code)]
 pub struct PartialHttp2Config {
     #[serde(default)]
-    pub settings: PartialSettings,
-    #[serde(default)]
-    pub settings_order: Option<Vec<String>>,
-    #[serde(default)]
-    pub connection_window_update: Option<u32>,
-    #[serde(default)]
-    pub initial_stream_id: Option<u32>,
-    #[serde(default)]
-    pub priority_frames: Option<Vec<H2PriorityFrame>>,
-    #[serde(default)]
-    pub headers_priority: Option<H2HeadersPriority>,
+    pub settings: Option<PartialSettings>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub settings_order: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub connection_window_update: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub initial_stream_id: Option<Option<u32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub priority_frames: Option<Option<Vec<H2PriorityFrame>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub headers_priority: Option<Option<H2HeadersPriority>>,
     #[serde(default)]
     pub end_stream_on_headers: Option<bool>,
-    #[serde(default)]
-    pub pseudo_headers_order: Option<Vec<String>>,
-    #[serde(default)]
-    pub headers_order: Option<Vec<String>>,
-    #[serde(default)]
-    pub http_headers: Option<HashMap<String, Option<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub pseudo_headers_order: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub headers_order: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub http_headers: Option<Option<HashMap<String, Option<String>>>>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
 #[allow(dead_code)]
 pub struct PartialHttp1Config {
-    #[serde(default)]
-    pub headers_order: Option<Vec<String>>,
-    #[serde(default)]
-    pub http_headers: Option<HashMap<String, Option<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub headers_order: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub http_headers: Option<Option<HashMap<String, Option<String>>>>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -173,11 +179,16 @@ impl PartialConfig {
 impl PartialTcpConfig {
     pub fn merge_into(&self, base: &TcpConfig) -> TcpConfig {
         TcpConfig {
+            mark: self.mark.unwrap_or(base.mark),
+            qnum_syn: base.qnum_syn,
+            qnum_tcp: base.qnum_tcp,
+            auto_iptables: base.auto_iptables,
             ttl: self.ttl.unwrap_or(base.ttl),
             window_size: self.window_size.unwrap_or(base.window_size),
             mss: self.mss.unwrap_or(base.mss),
             window_scale: self.window_scale.unwrap_or(base.window_scale),
             dont_fragment: self.dont_fragment.unwrap_or(base.dont_fragment),
+            timestamp: self.timestamp.unwrap_or(base.timestamp),
             tcp_options_order: self
                 .tcp_options_order
                 .clone()
@@ -202,14 +213,12 @@ impl PartialTlsConfig {
             extensions_order: self
                 .extensions_order
                 .clone()
-                .or_else(|| base.extensions_order.clone()),
+                .unwrap_or_else(|| base.extensions_order.clone()),
             cert_compression: self
                 .cert_compression
                 .clone()
                 .unwrap_or_else(|| base.cert_compression.clone()),
-            permute_extensions: self
-                .permute_extensions
-                .unwrap_or(base.permute_extensions),
+            permute_extensions: self.permute_extensions.unwrap_or(base.permute_extensions),
             status_request: self.status_request.unwrap_or(base.status_request),
             signed_certificate_timestamp: self
                 .signed_certificate_timestamp
@@ -218,12 +227,12 @@ impl PartialTlsConfig {
             session_ticket: self.session_ticket.unwrap_or(base.session_ticket),
             grease_enabled: self.grease_enabled.unwrap_or(base.grease_enabled),
             enable_ech: self.enable_ech.unwrap_or(base.enable_ech),
-            enable_ech_grease: self
-                .enable_ech_grease
-                .unwrap_or(base.enable_ech_grease),
-            record_size_limit: self
-                .record_size_limit
-                .or(base.record_size_limit),
+            enable_ech_grease: self.enable_ech_grease.unwrap_or(base.enable_ech_grease),
+            delegated_credentials: self
+                .delegated_credentials
+                .clone()
+                .unwrap_or_else(|| base.delegated_credentials.clone()),
+            record_size_limit: self.record_size_limit.unwrap_or(base.record_size_limit),
             doh: self.doh.clone().unwrap_or_else(|| base.doh.clone()),
         }
     }
@@ -232,16 +241,16 @@ impl PartialTlsConfig {
 impl PartialSettings {
     pub fn merge_into(&self, base: &Settings) -> Settings {
         Settings {
-            header_table_size: self.header_table_size.or(base.header_table_size),
+            header_table_size: self.header_table_size.unwrap_or(base.header_table_size),
             enable_push: self.enable_push.unwrap_or(base.enable_push),
             max_concurrent_streams: self
                 .max_concurrent_streams
-                .or(base.max_concurrent_streams),
-            initial_window_size: self.initial_window_size.or(base.initial_window_size),
-            max_frame_size: self.max_frame_size.or(base.max_frame_size),
+                .unwrap_or(base.max_concurrent_streams),
+            initial_window_size: self.initial_window_size.unwrap_or(base.initial_window_size),
+            max_frame_size: self.max_frame_size.unwrap_or(base.max_frame_size),
             max_header_list_size: self
                 .max_header_list_size
-                .or(base.max_header_list_size),
+                .unwrap_or(base.max_header_list_size),
         }
     }
 }
@@ -249,7 +258,11 @@ impl PartialSettings {
 impl PartialHttp2Config {
     pub fn merge_into(&self, base: &Http2Config) -> Http2Config {
         Http2Config {
-            settings: self.settings.merge_into(&base.settings),
+            settings: self
+                .settings
+                .as_ref()
+                .and_then(|s| base.settings.as_ref().map(|b| s.merge_into(b)))
+                .or_else(|| base.settings.clone()),
             settings_order: self
                 .settings_order
                 .clone()
@@ -257,15 +270,15 @@ impl PartialHttp2Config {
             connection_window_update: self
                 .connection_window_update
                 .unwrap_or(base.connection_window_update),
-            initial_stream_id: self.initial_stream_id.or(base.initial_stream_id),
+            initial_stream_id: self.initial_stream_id.unwrap_or(base.initial_stream_id),
             priority_frames: self
                 .priority_frames
                 .clone()
-                .or_else(|| base.priority_frames.clone()),
+                .unwrap_or_else(|| base.priority_frames.clone()),
             headers_priority: self
                 .headers_priority
                 .clone()
-                .or_else(|| base.headers_priority.clone()),
+                .unwrap_or_else(|| base.headers_priority.clone()),
             end_stream_on_headers: self
                 .end_stream_on_headers
                 .unwrap_or(base.end_stream_on_headers),
@@ -276,11 +289,11 @@ impl PartialHttp2Config {
             headers_order: self
                 .headers_order
                 .clone()
-                .or_else(|| base.headers_order.clone()),
+                .unwrap_or_else(|| base.headers_order.clone()),
             http_headers: self
                 .http_headers
                 .clone()
-                .or_else(|| base.http_headers.clone()),
+                .unwrap_or_else(|| base.http_headers.clone()),
         }
     }
 }
@@ -291,11 +304,11 @@ impl PartialHttp1Config {
             headers_order: self
                 .headers_order
                 .clone()
-                .or_else(|| base.headers_order.clone()),
+                .unwrap_or_else(|| base.headers_order.clone()),
             http_headers: self
                 .http_headers
                 .clone()
-                .or_else(|| base.http_headers.clone()),
+                .unwrap_or_else(|| base.http_headers.clone()),
         }
     }
 }
@@ -318,4 +331,19 @@ where
 {
     let opt = Option::<String>::deserialize(deserializer)?;
     Ok(Some(opt.filter(|s| !s.trim().is_empty())))
+}
+
+fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+fn deserialize_some_hex_or_int<'de, D>(deserializer: D) -> Result<Option<Option<u32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    crate::config::parse_opt_hex_or_int(deserializer).map(Some)
 }

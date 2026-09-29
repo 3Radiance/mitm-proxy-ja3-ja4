@@ -31,3 +31,8 @@ rand = "0.8"
 hickory-proto = "0.26.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+addr = "0.15.6"
+socket2 = "0.6.5"
+libc = "0.2.189"
+nfq = "0.2.5"
+etherparse = "0.14"

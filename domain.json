@@ -30,6 +30,21 @@
         }
     },
     "tls.peet.ws": {
+        "tcp": {
+            "mark": "0x11",
+            "ttl": 100,
+            "window_size": 64130,
+            "mss": 1400,
+            "window_scale": 7,
+            "dont_fragment": true,
+            "timestamp": false,
+            "tcp_options_order": [
+                "mss",
+                "sack_perm",
+                "wscale",
+                "nop"
+            ]
+        },
         "tls": {
             "cipher_suites": [
                 "TLS_AES_128_GCM_SHA256",

@@ -1,4 +1,5 @@
 use super::http::*;
+use crate::config::TcpConfig;
 use crate::h2_fingerprint::h2::ConnectionData;
 use crate::{h1_fingerprint, h2_fingerprint};
 
@@ -9,8 +10,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::{lookup_host, TcpListener, TcpStream},
 };
+
+use socket2::{Domain, Protocol, Socket, Type};
+use std::net::SocketAddr;
 
 use tokio::time::Duration;
 
@@ -55,8 +59,9 @@ impl Router {
         }
 
         let domain = addr::parse_domain_name(&key).ok()?;
-        let root = domain.root()?; // "google.com" для "mail.google.com"
+        let root = domain.root()?; // "google.com" for "mail.google.com"
         let suffix = domain.suffix(); // "com"
+        let prefix = domain.prefix()?; // "mail" for "mail.google.com"
 
         // 2. "*.google.com"
         if key != root {
@@ -66,13 +71,17 @@ impl Router {
             }
         }
 
-        // 3. "*.google.*" / 4. "google.*"
+        // 3. "*.google.*" / 4. "google.*" / 5. "mail.google.*"
         if let Some(label) = root.strip_suffix(&format!(".{suffix}")) {
             let candidate = format!("*.{label}.*");
             if let Some(d) = self.domains.get(&candidate) {
                 return Some(d);
             }
             let candidate = format!("{label}.*");
+            if let Some(d) = self.domains.get(&candidate) {
+                return Some(d);
+            }
+            let candidate = format!("{prefix}.{label}.*");
             if let Some(d) = self.domains.get(&candidate) {
                 return Some(d);
             }
@@ -148,7 +157,7 @@ async fn handle(client: TcpStream, router: Arc<Router>) -> Result<()> {
 
     let handle: Data = router.resolve(&sni);
 
-    let remote = match upstream_connect(host, handle.upstream.clone()).await? {
+    let remote = match upstream_connect(host, handle.upstream.clone(), handle.tcp.clone()).await? {
         ConnectionStatus::Success(stream) => stream,
         ConnectionStatus::Failure(reason) => {
             crate::log_tag!(warn, "TCP", "Connection failure: {}", reason);
@@ -171,6 +180,7 @@ async fn handle(client: TcpStream, router: Arc<Router>) -> Result<()> {
         remote,
         &sni,
         handle.tls.clone(),
+        handle.tcp.clone(),
         handle.http2.clone(),
         true,
         handle.upstream.clone(),
@@ -204,6 +214,7 @@ async fn handle(client: TcpStream, router: Arc<Router>) -> Result<()> {
 
     let proxydata = ConnectionData {
         tls: handle.tls,
+        tcp: handle.tcp,
         http2: handle.http2,
         http1: handle.http1,
         upstream: handle.upstream,
@@ -230,13 +241,23 @@ async fn handle(client: TcpStream, router: Arc<Router>) -> Result<()> {
 pub async fn upstream_connect(
     host: &str,
     upstream: Arc<Option<String>>,
+    tcp: Arc<TcpConfig>,
 ) -> Result<ConnectionStatus> {
     match &*upstream {
         Some(proxy_addr) => upstream_connect_helper(host, proxy_addr).await,
         None => {
-            match tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(&host)).await? {
-                Ok(stream) => Ok(ConnectionStatus::Success(stream)),
-                Err(e) => Ok(ConnectionStatus::Failure(e.to_string())),
+            if let Some(mark) = tcp.mark {
+                match tokio::time::timeout(Duration::from_secs(5), set_mark(mark, host)).await? {
+                    Ok(stream) => Ok(ConnectionStatus::Success(stream)),
+                    Err(e) => Ok(ConnectionStatus::Failure(e.to_string())),
+                }
+            } else {
+                match tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(&host))
+                    .await?
+                {
+                    Ok(stream) => Ok(ConnectionStatus::Success(stream)),
+                    Err(e) => Ok(ConnectionStatus::Failure(e.to_string())),
+                }
             }
         }
     }
@@ -337,5 +358,54 @@ pub async fn upstream_connect_helper(host: &str, upstream: &str) -> Result<Conne
             reason
         );
         Ok(ConnectionStatus::Failure(reason))
+    }
+}
+
+async fn set_mark(mark: u32, host: &str) -> Result<TcpStream> {
+    let addr: SocketAddr = lookup_host(host)
+        .await
+        .map_err(|e| anyhow::anyhow!("DNS lookup failed for {host}: {e}"))?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No IP addresses found for {host}"))?;
+
+    let domain = if addr.is_ipv4() {
+        Domain::IPV4
+    } else {
+        Domain::IPV6
+    };
+
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
+        .map_err(|e| anyhow::anyhow!("Socket creation failed: {e}"))?;
+
+    socket
+        .set_mark(mark)
+        .map_err(|e| anyhow::anyhow!("Failed to set SO_MARK ({mark}): {e}"))?;
+
+    socket
+        .set_nonblocking(true)
+        .map_err(|e| anyhow::anyhow!("Set nonblocking failed: {e}"))?;
+
+    match socket.connect(&addr.into()) {
+        Ok(_) => {}
+        Err(ref e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
+        Err(e) => return Err(anyhow::anyhow!("Connect error: {e}")),
+    }
+
+    let std_stream: std::net::TcpStream = socket.into();
+    let stream = TcpStream::from_std(std_stream)
+        .map_err(|e| anyhow::anyhow!("Tokio conversion failed: {e}"))?;
+
+    let handshake_future = async {
+        stream.writable().await?;
+        if let Some(err) = stream.take_error()? {
+            return Err(err);
+        }
+        Ok::<(), std::io::Error>(())
+    };
+
+    match tokio::time::timeout(Duration::from_secs(5), handshake_future).await {
+        Ok(Ok(())) => Ok(stream),
+        Ok(Err(e)) => Err(anyhow::anyhow!("Handshake failed: {e}")),
+        Err(_) => Err(anyhow::anyhow!("Connection timed out")),
     }
 }

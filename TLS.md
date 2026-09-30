@@ -231,11 +231,31 @@ Unknown names are a hard error, not a silent skip.
   that exact encoding, so no separate config exists. Empty `settings`
   means an empty ALPS payload.
 
-### `delegated_credentials` — opt-in extension
+**### `delegated_credentials` — opt-in extension**
 
-List of signature-scheme names (same vocabulary as
-`signature_algorithms`), enables the `delegated_credentials` extension.
+Enables the TLS `delegated_credentials` extension.
+
+Delegated Credentials allow a TLS endpoint to use a short-lived delegated
+
+key for TLS handshakes instead of the private key associated with the
+
+certificate. The value is a list of signature-scheme names specifying
+
+which algorithms may be used by the delegated credential.
+
 `null` = extension absent.
+
+Supported values:
+
+```text
+ecdsa_secp256r1_sha256
+ecdsa_secp384r1_sha384
+ecdsa_secp521r1_sha512
+ed25519
+ecdsa_sha1
+```
+
+
 
 ### `record_size_limit` — int or `null`
 

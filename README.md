@@ -4,8 +4,6 @@
 
 An HTTP MITM proxy built with Rust, `tokio`, and `btls`.
 
-> **Currently in MVP (Minimum Viable Product) stage.**
-
 This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, extension permutation/ordering, OCSP stapling, Certificate Transparency (SCT), session tickets, ALPS, and Encrypted Client Hello (ECH, resolved live via DoH, with GREASE fallback) are all driven by a JSON profile. HTTP/2 fingerprinting (Akamai) and HTTP/1.1 header ordering/rewriting are also fully configurable. TCP (L4) fingerprinting is live too: SYN packets of upstream connections are rewritten in NFQUEUE (TTL, window size, MSS, window scale, DF flag, timestamps, exact TCP option order, per-domain marks) with automatic iptables management.
 
 ### TLS Fingerprint Spoofing Configuration

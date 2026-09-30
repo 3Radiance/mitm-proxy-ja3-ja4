@@ -3,8 +3,8 @@
         "config": {
             "port": 9090,
             "upstream_proxy": null,
-            "cert": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.crt",
-            "key": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.key"
+            "cert": "path/to/ca.crt",
+            "key": "path/to/ca.key"
         },
         "tcp": {
             "mark": null,
@@ -74,6 +74,13 @@
             "grease_enabled": false,
             "enable_ech": true,
             "enable_ech_grease": false,
+            "delegated_credentials": [
+                "ecdsa_secp256r1_sha256",
+                "ecdsa_secp384r1_sha384",
+                "ecdsa_secp521r1_sha512",
+                "ed25519",
+                "ecdsa_sha1"
+            ],
             "record_size_limit": null,
             "doh": [
                 "dns.google"

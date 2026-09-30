@@ -47,9 +47,12 @@ browser ──TLS──▶ proxy ──TCP+TLS──▶ upstream
    `set_payload_len` when the TCP header size changes.
 
 Per-mark profiles: the queue handlers pick a config by the packet's fwmark —
-the domain overlay matching that mark if one exists, otherwise the default
-profile. Note that domain TCP configs only take effect when the **default**
-`mark` is set (same condition that starts the queues at all).
+the domain config registered under that mark if one exists, otherwise the
+default profile. The queues start when the base `mark` is set **or** any
+domain overlay sets its own mark (`nfqueue_on = base.mark.is_some() ||
+!tcp_domains.is_empty()`, `src/main.rs`). So a `null`/unset base `mark`
+only leaves the *default* traffic unmarked (direct connects, no rewrite) —
+marked domains are still rewritten.
 
 ## Requirements
 
@@ -141,9 +144,18 @@ mark once by hand under sudo; they persist until reboot/flush.
 
 A domain overlay may carry its own `tcp` section. Merge semantics: every
 field inherits the base value unless the overlay sets it — including
-`mark` (an explicit `"mark": null` unsets it). `qnum_syn`/`qnum_tcp` are
-always shared from the base profile. Every distinct mark gets its own
-iptables pair and its own config branch in the queue handlers.
+`mark` (an explicit `"mark": null` unsets it and opts that domain out of
+rewriting). `qnum_syn`/`qnum_tcp`/`auto_iptables` are always shared from
+the base profile. Every distinct mark gets its own iptables pair and its
+own config branch in the queue handlers (`mark → TcpConfig` map,
+`src/main.rs`, `src/tcp_fingerprint/iptables.rs`).
+
+Base `mark` unset is a valid setup: the default traffic is then unmarked
+(plain `TcpStream::connect`, no queue, no rewrite — `src/proxy/tcp.rs`),
+but any domain that sets its own `mark` still gets `SO_MARK` on its
+upstream sockets and its SYNs rewritten. This is how you rewrite only
+selected domains while leaving everything else untouched, and route each
+domain separately (`ip rule add fwmark <M> table <T>` / distinct gateways).
 
 ```json
 {
@@ -161,6 +173,67 @@ iptables pair and its own config branch in the queue handlers.
     }
 }
 ```
+
+With this overlay only `tls.peet.ws` upstreams get `SO_MARK 0x11` and the
+`ttl 100 / window 64130 / ...` rewrite; everything else follows the base
+profile (unmarked and untouched when the base `mark` is `null`).
+
+To reuse the same fingerprint on another pattern, just set the same
+`mark` — no need to copy the full `tcp` block. When the base `mark` is
+disabled, only the domain sockets are marked (each overlay's `mark` goes
+to `SO_MARK` on its own upstreams), and the queue handlers pick the
+rewrite by mark only. So a minimal `{"mark": "0x11"}` joins the same
+rewrite/route branch as the domain that defines the full `0x11` profile,
+and its TCP settings spill over from there:
+
+```json
+{
+    "browserleaks.com": {
+        "config": { "upstream_proxy": null },
+        "tcp": {
+            "mark": "0x11",
+            "ttl": 100,
+            "window_size": 64130,
+            "mss": 1460,
+            "window_scale": 7,
+            "dont_fragment": true,
+            "timestamp": true,
+            "tcp_options_order": ["mss", "sack_perm", "wscale", "nop"]
+        }
+    },
+    "*.browserleaks.*": {
+        "config": { "upstream_proxy": null },
+        "tcp": { "mark": "0x11" },
+        "tls": {
+            "cipher_suites": [
+                "TLS_AES_128_GCM_SHA256",
+                "TLS_AES_256_GCM_SHA384",
+                "ECDHE-ECDSA-AES128-GCM-SHA256",
+                "ECDHE-RSA-AES128-GCM-SHA256",
+                "TLS_RSA_WITH_AES_256_CBC_SHA"
+            ],
+            "enable_ech": false
+        }
+    }
+}
+```
+
+Notes on sharing a mark:
+
+- One mark = one rewrite branch + one routing slot, by design. Queue
+  handlers match **by mark only, not by SNI** (`tcp_domains.get(&mark)` in
+  `src/tcp_fingerprint/syn.rs` / `tcp.rs`). That is what makes the
+  minimal `{"mark": "0x11"}` form work — and what makes per-domain
+  routing easy: one domain (or group) → one mark → one `ip rule` / table.
+  Just don't put *different* `ttl`/options under the same mark: they
+  share one branch, so keep the full block on one pattern and join it
+  with a bare mark on the rest, or give each fingerprint its own mark.
+- When the base `mark` **is** set, an overlay without its own mark
+  inherits the base mark and intentionally falls back to the default
+  branch (`if mark_c == mark { &default }` guard in `syn.rs` / `tcp.rs`),
+  so its `ttl`/options overrides are ignored. This avoids routing
+  ambiguity (same mark but different values). Want custom TCP values for
+  a domain in that mode — give it a distinct mark.
 
 Caveat: if the base profile sets `upstream_proxy`, **no marks are set at
 all** — upstream connections go through `CONNECT` to that proxy on plain

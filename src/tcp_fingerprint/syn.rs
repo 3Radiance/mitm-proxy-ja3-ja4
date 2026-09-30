@@ -1,7 +1,6 @@
 use anyhow::Result;
 use etherparse::{NetHeaders, PacketHeaders, TcpOptionElement, TcpOptions, TransportHeader};
 use nfq::{Queue, Verdict};
-use serde::de;
 use std::collections::HashMap;
 use std::sync::Arc;
 

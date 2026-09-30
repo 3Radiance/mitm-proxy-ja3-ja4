@@ -235,9 +235,30 @@ Notes on sharing a mark:
   ambiguity (same mark but different values). Want custom TCP values for
   a domain in that mode — give it a distinct mark.
 
-Caveat: if the base profile sets `upstream_proxy`, **no marks are set at
-all** — upstream connections go through `CONNECT` to that proxy on plain
-sockets, so the whole TCP layer is bypassed by design.
+### Policy routing by mark (e.g. via VPN)
+
+A mark is both the rewrite key and a routing handle: one domain (or
+group) → one mark → one `ip rule` / table. Example — send `0x11` via
+`tun0`, everything else via the default route:
+
+```bash
+ip rule add fwmark 0x11 table 100
+ip route add default dev tun0 table 100
+```
+
+Order matters, and it works in your favor: the `fwmark` routing decision
+happens **before** `mangle/POSTROUTING` (i.e. before the NFQUEUE rewrite).
+The queue handlers clear the mark to `0` after the rewrite
+(`set_nfmark(0)`) only to avoid re-matching lower rules / loops — the
+`SO_MARK` stays on the socket, so the next packet is born marked again
+and routed the same way.
+
+Caveat: if the profile sets `upstream_proxy`, **no marks are set at
+all** — the upstream TCP connection terminates at that proxy (`CONNECT`
+on a plain socket, `src/proxy/tcp.rs`), so there is nothing to rewrite
+towards the real target anyway. Even if a mark were set, the SYN rewrite
+would die on the proxy socket and never reach the origin — hence the
+whole TCP layer is bypassed by design in this mode.
 
 ## Verification
 

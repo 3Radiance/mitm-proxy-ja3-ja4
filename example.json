@@ -1,5 +1,5 @@
 {
-    "firefox_153_linux": {
+    "example": {
         "config": {
             "port": 9090,
             "upstream_proxy": null,

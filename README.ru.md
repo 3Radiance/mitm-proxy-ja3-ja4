@@ -8,15 +8,15 @@ HTTP MITM-прокси на Rust, `tokio` и `btls`.
 
 ### Настройка подмены TLS-отпечатка
 
-[TLS](TLS.ru.md)
+[TLS](docs/ru/TLS.ru.md)
 
 ### Настройка подмены HTTP/2-отпечатка
 
-[HTTP/2](HTTP2.ru.md)
+[HTTP/2](docs/ru/HTTP2.ru.md)
 
 ### Настройка подмены TCP-отпечатка
 
-[TCP](TCP.ru.md)
+[TCP](docs/ru/TCP.ru.md)
 
 ## Возможности (текущая реализация)
 

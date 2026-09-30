@@ -113,7 +113,7 @@ fn ensure_one(bin: &str, mark: u32, qnum: u16, syn: bool, strict: bool) -> Resul
             .output()
         {
             Ok(out) if out.status.success() => continue,
-            Ok(_) => break, // копий больше нет
+            Ok(_) => break,
             Err(e) if !strict => {
                 crate::log_tag!(debug, "IPT", "{} not available, skip: {}", bin, e);
                 return Ok(());

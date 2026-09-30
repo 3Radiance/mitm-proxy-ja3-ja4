@@ -1,6 +1,6 @@
 # Подмена TCP-отпечатка (L4)
 
-[English](TCP.md) | [Русский](TCP.ru.md)
+[English](../eng/TCP.md) | [Русский](TCP.ru.md)
 
 Прокси подменяет TCP-отпечаток **исходящих апстрим-соединений**
 (TTL, window size, MSS, window scale, флаг DF, порядок TCP-опций),

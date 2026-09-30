@@ -1,6 +1,6 @@
 # TLS Fingerprint Spoofing (JA3/JA4)
 
-[English](TLS.md) | [Русский](TLS.ru.md)
+[English](TLS.md) | [Русский](../ru/TLS.ru.md)
 
 The upstream TLS connection is built entirely from the JSON profile:
 every byte of the ClientHello that fingerprinting sees — cipher order,

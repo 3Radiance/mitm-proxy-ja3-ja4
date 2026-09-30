@@ -1,6 +1,6 @@
 # TCP (L4) Fingerprint Spoofing
 
-[English](TCP.md) | [Русский](TCP.ru.md)
+[English](TCP.md) | [Русский](../ru/TCP.ru.md)
 
 The proxy spoofs the TCP fingerprint of **outgoing upstream connections**
 (TTL, window size, MSS, window scale, DF flag, TCP option order) by

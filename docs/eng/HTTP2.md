@@ -1,6 +1,6 @@
 # HTTP/2 Fingerprint Spoofing (Akamai)
 
-[English](HTTP2.md) | [Русский](HTTP2.ru.md)
+[English](HTTP2.md) | [Русский](../ru/HTTP2.ru.md)
 
 HTTP/2 fingerprinting (the Akamai-style hash over SETTINGS, window
 sizes, priorities and header order) is fully configurable through the

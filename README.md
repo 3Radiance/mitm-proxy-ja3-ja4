@@ -8,15 +8,15 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 ### TLS Fingerprint Spoofing Configuration
 
-[TLS](TLS.md)
+[TLS](docs/eng/TLS.md)
 
 ### HTTP/2 Fingerprint Spoofing Configuration
 
-[HTTP/2](HTTP2.md)
+[HTTP/2](docs/eng/HTTP2.md)
 
 ### TCP Fingerprint Spoofing Configuration
 
-[TCP](TCP.md)
+[TCP](docs/eng/TCP.md)
 
 ## Features (Current Implementation)
 

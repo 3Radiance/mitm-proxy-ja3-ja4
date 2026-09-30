@@ -7,11 +7,11 @@
             "key": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.key"
         },
         "tcp": {
-            "mark": "0x10",
+            "mark": null,
             "qnum_syn": 301,
             "qnum_tcp": 302,
             "auto_iptables": true,
-            "ttl": 128,
+            "ttl": 64,
             "window_size": 64240,
             "mss": 1460,
             "window_scale": 7,

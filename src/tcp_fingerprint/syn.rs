@@ -1,6 +1,7 @@
 use anyhow::Result;
 use etherparse::{NetHeaders, PacketHeaders, TcpOptionElement, TcpOptions, TransportHeader};
 use nfq::{Queue, Verdict};
+use serde::de;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -22,10 +23,14 @@ pub async fn start_qnum_syn(
         let payload = msg.get_payload().to_vec();
         let mark = msg.get_nfmark();
 
-        let config: &TcpConfig = if default.mark.is_some_and(|m| m != mark) {
-            tcp_domains.get(&mark).unwrap_or(&default)
+        let config: &TcpConfig = if let Some(mark_c) = default.mark {
+            if mark_c != mark {
+                tcp_domains.get(&mark).unwrap_or(&default)
+            } else {
+                &default
+            }
         } else {
-            &default
+            tcp_domains.get(&mark).unwrap_or(&default)
         };
 
         let mut new_packet: Option<Vec<u8>> = None;

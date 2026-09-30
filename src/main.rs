@@ -144,7 +144,7 @@ async fn main() -> Result<()> {
     let tcp_shutdown = Arc::clone(&tcp);
     let tcp_domains_shutdown = tcp_domains.clone();
 
-    let nfqueue_on = config.tcp.mark.is_some();
+    let nfqueue_on = config.tcp.mark.is_some() || !tcp_domains.is_empty();
 
     if nfqueue_on {
         if config.tcp.qnum_syn == config.tcp.qnum_tcp {

@@ -247,6 +247,7 @@ pub async fn upstream_connect(
         Some(proxy_addr) => upstream_connect_helper(host, proxy_addr).await,
         None => {
             if let Some(mark) = tcp.mark {
+                crate::log_tag!(info, "TCP", "Set mark for {}: {}", host, mark);
                 match tokio::time::timeout(Duration::from_secs(5), set_mark(mark, host)).await? {
                     Ok(stream) => Ok(ConnectionStatus::Success(stream)),
                     Err(e) => Ok(ConnectionStatus::Failure(e.to_string())),

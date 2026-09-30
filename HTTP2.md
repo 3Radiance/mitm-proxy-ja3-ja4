@@ -161,8 +161,7 @@ is end-of-stream, so it reshapes rather than invents stream closure.
 Order of `:method`, `:path`, `:authority`, `:scheme` in outgoing
 requests. Unknown names fail the builder (fail fast, same as settings).
 Browsers differ here characteristically — Firefox sends
-`:method, :authority, :scheme, :path` — so copy the target, don't
-improvise:
+`:method, :authority, :scheme, :path`:
 
 ```json
 "pseudo_headers_order": [":method", ":authority", ":scheme", ":path"]

@@ -160,8 +160,7 @@ end-of-stream, то есть перекраивает закрытие, а не 
 Порядок `:method`, `:path`, `:authority`, `:scheme` в исходящих
 запросах. Неизвестные имена роняют билд (fail fast, как у настроек).
 Браузеры тут характерно различаются — Firefox шлёт
-`:method, :authority, :scheme, :path`, — так что копируй цель, не
-импровизируй:
+`:method, :authority, :scheme, :path`:
 
 ```json
 "pseudo_headers_order": [":method", ":authority", ":scheme", ":path"]

@@ -1,7 +1,7 @@
 /target
 my_code.txt
 flake.lock
-flake.nix
 Cargo.lock
 ca.crt
 ca.key
+flake.open

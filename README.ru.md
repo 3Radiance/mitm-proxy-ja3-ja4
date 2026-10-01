@@ -81,9 +81,9 @@ HTTP MITM-прокси на Rust, `tokio` и `btls`.
 Примеры:
 
 ```bash
-RUST_LOG='H2=error' cargo run --release -- -c profile.json
-RUST_LOG='TCP=debug,H2=error,TLS=warn' cargo run --release -- -c profile.json
-RUST_LOG='CA=info,TLS=warn,H2=error' cargo run --release -- -c profile.json
+RUST_LOG='H2=error' cargo run --release -- -c profile.yaml
+RUST_LOG='TCP=debug,H2=error,TLS=warn' cargo run --release -- -c profile.yaml
+RUST_LOG='CA=info,TLS=warn,H2=error' cargo run --release -- -c profile.yaml
 ```
 
 Поддерживаемые теги совпадают с именами модулей в коде: `TCP`, `HTTP`, `H1`, `H2`, `TLS`, `CA`, `ECH`, `CFG`, `IPT`, `NFQUEUE`, `Runtime`.
@@ -101,25 +101,22 @@ cargo build --release
 
 ### 2. Запуск
 
-Все настройки — порт, апстрим-прокси и пути к файлам CA — задаются в JSON-конфиге, который передаётся через `-c` / `--config <путь>`. Флагов `--port` / `--upstream` больше нет.
+Все настройки — порт, апстрим-прокси и пути к файлам CA — задаются в YAML-конфиге, который передаётся через `-c` / `--config <путь>`. Флагов `--port` / `--upstream` больше нет.
 
-```json
-{
-  "config": {
-    "port": 9090,
-    "upstream_proxy": "127.0.0.1:10808",
-    "cert": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.crt",
-    "key": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.key"
-  }
-}
+```yaml
+config: 
+  port: 9090
+  upstream_proxy: "127.0.0.1:10808"
+  cert: "/path/to/ca.crt"
+  key: "/path/to/ca.key"
 ```
 
 Чтобы запустить без апстрим-прокси, укажи `"upstream_proxy": null`.
 
 ```bash
-cargo run --release -- --config profile.json
+cargo run --release -- --config profile.yaml
 # или
-cargo run --release -- -c profile.json
+cargo run --release -- -c profile.yaml
 ```
 
 При первом запуске, если файлы `cert`/`key` ещё не существуют, прокси сгенерирует CA по указанным путям:
@@ -129,38 +126,40 @@ cargo run --release -- -c profile.json
 ### 3. Доменные переопределения (опционально)
 
 ```bash
-cargo run --release -- -c profile.json -d domain.json
+cargo run --release -- -c profile.yaml -d domain.yaml
 ```
 
-`domain.json` — карта доменных паттернов в частичные оверлеи, указывать нужно только поля, отличающиеся от базового профиля:
+`domain.yaml` — карта доменных паттернов в частичные оверлеи, указывать нужно только поля, отличающиеся от базового профиля:
 
-```json
-{
-  "browserleaks.com": {
-    "config": { "upstream_proxy": null },
-    "tls": { "enable_ech": false }
-  },
-  "*.google.com": {
-    "tls": { "enable_ech": true }
-  },
-  "tls.peet.ws": {
-    "tcp": {
-      "mark": "0x11",
-      "ttl": 100,
-      "window_size": 64130,
-      "mss": 1400,
-      "window_scale": 7,
-      "dont_fragment": true,
-      "timestamp": false,
-      "tcp_options_order": ["mss", "sack_perm", "wscale", "nop"]
-    }
-  },
-  "mail.google.*": {
-    "tls": {
-      "curves": ["X25519", "P-256"]
-    }
-  }
-}
+```yaml
+"browserleaks.com":
+  config:
+    upstream_proxy: null
+  tls:
+    enable_ech: false
+
+"*.google.com":
+  tls:
+    enable_ech: true
+
+"tls.peet.ws":
+  tcp:
+    mark: "0x11"
+    ttl: 100
+    window_size: 64130
+    mss: 1400
+    window_scale: 7
+    dont_fragment: true
+    timestamp: false
+    tcp_options_order:
+      - mss
+      - sack_perm
+      - wscale
+      - nop
+
+"mail.google.*":
+  tls:
+    curves: [X25519, P-256]
 ```
 
 Порядок сопоставления для каждого соединения (по SNI, без учёта регистра): точное → `*.root` → `*.label.*` → `label.*` → базовый профиль. Отсутствующий ключ (или `null` везде, кроме `upstream_proxy`) означает «наследовать из базы», а `"upstream_proxy": null` явно форсит прямое соединение для этого домена. TCP-поля (включая `mark`) наследуют базовый профиль так же — `"mark": null` снимает марку для этого домена. Учти: если базовый профиль задаёт `upstream_proxy`, `SO_MARK` не ставится вообще и TCP-слой обходится (см. `TCP.ru.md`).

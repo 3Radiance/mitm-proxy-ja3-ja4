@@ -81,9 +81,9 @@ The proxy uses `tracing` with per-module filtering via `RUST_LOG`.
 Examples:
 
 ```bash
-RUST_LOG='H2=error' cargo run --release -- -c profile.json
-RUST_LOG='TCP=debug,H2=error,TLS=warn' cargo run --release -- -c profile.json
-RUST_LOG='CA=info,TLS=warn,H2=error' cargo run --release -- -c profile.json
+RUST_LOG='H2=error' cargo run --release -- -c profile.yaml
+RUST_LOG='TCP=debug,H2=error,TLS=warn' cargo run --release -- -c profile.yaml
+RUST_LOG='CA=info,TLS=warn,H2=error' cargo run --release -- -c profile.yaml
 ```
 
 Supported tags are the same module names used in the code: `TCP`, `HTTP`, `H1`, `H2`, `TLS`, `CA`, `ECH`, `CFG`, `IPT`, `NFQUEUE`, `Runtime`.
@@ -101,25 +101,22 @@ cargo build --release
 
 ### 2. Run
 
-All settings — port, upstream proxy, and CA file paths — live in the JSON config passed via `-c` / `--config <path>`. There are no `--port` / `--upstream` CLI flags.
+All settings — port, upstream proxy, and CA file paths — live in the YAML config passed via `-c` / `--config <path>`. There are no `--port` / `--upstream` CLI flags.
 
-```json
-{
-  "config": {
-    "port": 9090,
-    "upstream_proxy": "127.0.0.1:10808",
-    "cert": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.crt",
-    "key": "/home/radiance-root/mitm-proxy-ja3-ja4/ca.key"
-  }
-}
+```yaml
+config: 
+  port: 9090
+  upstream_proxy: "127.0.0.1:10808"
+  cert: "/path/to/ca.crt"
+  key: "/path/to/ca.key"
 ```
 
-To run without an upstream proxy, set `"upstream_proxy": null`.
+To run without an upstream proxy, set `upstream_proxy: null`.
 
 ```bash
-cargo run --release -- --config profile.json
+cargo run --release -- --config profile.yaml
 # or
-cargo run --release -- -c profile.json
+cargo run --release -- -c profile.yaml
 ```
 
 Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate the CA files at the configured paths:
@@ -129,38 +126,41 @@ Upon the first run, if `cert`/`key` do not exist yet, the proxy will generate th
 ### 3. Per-domain overrides (optional)
 
 ```bash
-cargo run --release -- -c profile.json -d domain.json
+cargo run --release -- -c profile.yaml -d domain.yaml
 ```
 
-`domain.json` maps domain patterns to partial overlays — only the fields that differ from the base profile:
+`domain.yaml` maps domain patterns to partial overlays — only the fields that differ from the base profile:
 
-```json
-{
-  "browserleaks.com": {
-    "config": { "upstream_proxy": null },
-    "tls": { "enable_ech": false }
-  },
-  "*.google.com": {
-    "tls": { "enable_ech": true }
-  },
-  "tls.peet.ws": {
-    "tcp": {
-      "mark": "0x11",
-      "ttl": 100,
-      "window_size": 64130,
-      "mss": 1400,
-      "window_scale": 7,
-      "dont_fragment": true,
-      "timestamp": false,
-      "tcp_options_order": ["mss", "sack_perm", "wscale", "nop"]
-    }
-  },
-  "mail.google.*": {
-    "tls": {
-      "curves": ["X25519", "P-256"]
-    }
-  }
-}
+```yaml
+"browserleaks.com":
+  config:
+    upstream_proxy: null
+  tls:
+    enable_ech: false
+
+"*.google.com":
+  tls:
+    enable_ech: true
+
+"tls.peet.ws":
+  tcp:
+    mark: "0x11"
+    ttl: 100
+    window_size: 64130
+    mss: 1400
+    window_scale: 7
+    dont_fragment: true
+    timestamp: false
+    tcp_options_order:
+      - mss
+      - sack_perm
+      - wscale
+      - nop
+
+"mail.google.*":
+  tls:
+    curves: [X25519, P-256]
+
 ```
 
 Match order per connection (by SNI, case-insensitive): exact → `*.root` → `*.label.*` → `label.*` → base profile. A missing key (or `null` anywhere except `upstream_proxy`) means "inherit from base", while `"upstream_proxy": null` explicitly forces a direct connection for that domain. TCP fields (including `mark`) inherit the base profile the same way — `"mark": null` unsets the mark for that domain. Note: if the base profile sets `upstream_proxy`, no `SO_MARK` is applied at all and the TCP layer is bypassed (see `TCP.md`).

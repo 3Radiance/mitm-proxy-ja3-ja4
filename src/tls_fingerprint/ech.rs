@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use std::pin::Pin;
 use tokio::net::TcpStream;
 use tokio_btls::SslStream;
 
@@ -83,7 +84,9 @@ pub async fn set_ech(
 
     let doh_domain: &str = {
         let mut rng = rand::thread_rng();
-        tls.doh.as_ref().and_then(|d| d.choose(&mut rng))
+        tls.doh
+            .as_ref()
+            .and_then(|d| d.choose(&mut rng))
             .map(String::as_str)
             .context("Failed to get DoH domain")?
     };
@@ -93,7 +96,6 @@ pub async fn set_ech(
         tcp.clone(),
         http2.clone(),
         upstream,
-        cache.clone(),
         doh_domain,
     )
     .await?;
@@ -181,7 +183,6 @@ async fn upstream_for_ech(
     tcp: Arc<TcpConfig>,
     http2: Arc<Http2Config>,
     upstream: Arc<Option<String>>,
-    cache: Arc<EchCache>,
     doh_domain: &str,
 ) -> Result<SslStream<TcpStream>> {
     let doh_domain_with_port = format!("{}:443", doh_domain);
@@ -197,19 +198,24 @@ async fn upstream_for_ech(
 
     remote.set_nodelay(true)?;
 
-    let (remote, selected_alpn) = Box::pin(tls_fingerprint::tls::create_ssl_acceptor_upstream(
-        remote,
-        doh_domain,
-        tls.clone(),
-        tcp.clone(),
-        http2.clone(),
-        false,
-        upstream,
-        cache.clone(),
-    ))
-    .await?;
+    let remote_ssl = tls_fingerprint::tls::create_ssl_acceptor_upstream(tls.clone()).await?;
 
-    if selected_alpn.as_deref() != Some(b"\x02h2") {
+    let mut ssl = remote_ssl.configure()?.into_ssl(&doh_domain)?;
+
+    tls_fingerprint::helpers::set_alps(&mut ssl, http2.clone(), tls.clone());
+
+    let mut remote = SslStream::new(ssl, remote)?;
+
+    tokio::time::timeout(Duration::from_secs(5), Pin::new(&mut remote).connect()).await??;
+
+    let alpn = remote.ssl().selected_alpn_protocol().map(|p| {
+        let mut wire = Vec::with_capacity(1 + p.len());
+        wire.push(p.len() as u8);
+        wire.extend_from_slice(p);
+        wire
+    });
+
+    if alpn.as_deref() != Some(b"\x02h2") {
         return Err(anyhow!("DoH resolver did not negotiate h2"));
     }
 

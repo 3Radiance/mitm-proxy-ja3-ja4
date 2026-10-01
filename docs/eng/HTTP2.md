@@ -4,7 +4,7 @@
 
 HTTP/2 fingerprinting (the Akamai-style hash over SETTINGS, window
 sizes, priorities and header order) is fully configurable through the
-`http2` section of the JSON profile. The proxy shapes the **upstream**
+`http2` section of the YAML profile. The proxy shapes the **upstream**
 connection — preface, SETTINGS frame, stream priorities, header order —
 while the browser-facing side just accepts what the client offers
 (`src/h2_fingerprint/`).
@@ -28,31 +28,43 @@ If the upstream connection drops mid-request, the proxy reconnects
 socket included) and aborts on ALPN mismatch, so a reconnect can never
 silently downgrade `h2` to `http/1.1`.
 
-## Configuration (`http2` block)
+## Example Configuration (`http2` block)
 
-```json
-"http2": {
-    "settings": {
-        "header_table_size": 65536,
-        "enable_push": false,
-        "max_concurrent_streams": null,
-        "initial_window_size": 6291456,
-        "max_frame_size": 16384,
-        "max_header_list_size": null
-    },
-    "settings_order": ["HEADER_TABLE_SIZE", "ENABLE_PUSH", "INITIAL_WINDOW_SIZE", "MAX_FRAME_SIZE"],
-    "connection_window_update": 15663105,
-    "initial_stream_id": null,
-    "priority_frames": null,
-    "headers_priority": { "exclusive": true, "depends_on": 0, "weight": 255 },
-    "end_stream_on_headers": true,
-    "pseudo_headers_order": [":method", ":authority", ":scheme", ":path"],
-    "headers_order": null,
-    "http_headers": {
-        "user-agent": "Mozilla/5.0 (...)",
-        "accept-language": "en-US,en;q=0.6"
-    }
-}
+```yaml
+http2:
+  settings:
+    header_table_size: 65536
+    enable_push: false
+    max_concurrent_streams: null
+    initial_window_size: 6291456
+    max_frame_size: 16384
+    max_header_list_size: null
+  settings_order:
+    - HEADER_TABLE_SIZE
+    - ENABLE_PUSH
+    - INITIAL_WINDOW_SIZE
+    - MAX_FRAME_SIZE
+  connection_window_update: 15663105
+  initial_stream_id: null
+  priority_frames: null
+  headers_priority:
+    exclusive: true
+    depends_on: 0
+    weight: 255
+  end_stream_on_headers: true
+  pseudo_headers_order:
+    - ":method"
+    - ":authority"
+    - ":scheme"
+    - ":path"
+  headers_order: 
+    - user-agent
+    - accept
+    - accept-language
+    - priority
+  http_headers:
+    user-agent: "Mozilla/5.0 (...)"
+    accept-language: "en-US,en;q=0.6"
 ```
 
 ### `settings` — SETTINGS frame values
@@ -115,11 +127,16 @@ ID past them — a collision breaks the connection.
 PRIORITY frames sent before normal request streams (the classic
 Firefox/Chrome priority tree signal):
 
-```json
-"priority_frames": [
-    { "stream_id": 1, "exclusive": false, "depends_on": 0, "weight": 41 },
-    { "stream_id": 3, "exclusive": false, "depends_on": 0, "weight": 42 }
-]
+```yaml
+priority_frames:
+  - stream_id: 1
+    exclusive: false
+    depends_on: 0
+    weight: 41
+  - stream_id: 3
+    exclusive: false
+    depends_on: 0
+    weight: 42
 ```
 
 | Field | Meaning |
@@ -138,8 +155,11 @@ Firefox/Chrome priority tree signal):
 Priority attached to each request HEADERS stream
 (`headers_stream_dependency`):
 
-```json
-"headers_priority": { "exclusive": true, "depends_on": 0, "weight": 255 }
+```yaml
+headers_priority:
+  exclusive: true
+  depends_on: 0
+  weight: 255
 ```
 
 Same fields as priority frames, minus `stream_id`. `null` = no custom
@@ -163,8 +183,12 @@ requests. Unknown names fail the builder (fail fast, same as settings).
 Browsers differ here characteristically — Firefox sends
 `:method, :authority, :scheme, :path`:
 
-```json
-"pseudo_headers_order": [":method", ":authority", ":scheme", ":path"]
+```yaml
+pseudo_headers_order:
+  - ":method"
+  - ":authority"
+  - ":scheme"
+  - ":path"
 ```
 
 ### `headers_order` + `http_headers` — headers
@@ -178,14 +202,17 @@ Two-stage pipeline (`apply_http_headers`):
    only — `null` entries are skipped).
 3. Append every remaining incoming header not seen yet.
 
-```json
-"headers_order": ["user-agent", "accept", "accept-language", "priority"],
-"http_headers": {
-    "user-agent": "Mozilla/5.0",
-    "accept-language": "en-US,en;q=0.6",
-    "priority": "u=0, i",
-    "referer": null
-}
+```yaml
+headers_order:
+  - user-agent
+  - accept
+  - accept-language
+  - priority
+http_headers:
+  user-agent: "Mozilla/5.0"
+  accept-language: "en-US,en;q=0.6"
+  priority: "u=0, i"
+  referer: null
 ```
 
 Result: `user-agent` replaced, `accept-language` replaced, `priority`
@@ -213,7 +240,7 @@ use that exact encoding, so one config drives both wire locations.
 Keep them in sync with the target browser; a mismatch between the
 SETTINGS frame and the ALPS payload is itself a fingerprint signal.
 
-## Per-domain HTTP/2 (`-d domain.json`)
+## Per-domain HTTP/2 (`-d domain.yaml`)
 
 Any `http2` field can be overridden per domain pattern; `settings` ITS
 sub-fields merge individually, everything else follows the standard

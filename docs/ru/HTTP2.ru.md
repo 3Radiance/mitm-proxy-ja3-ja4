@@ -28,31 +28,43 @@ SETTINGS-фрейм, приоритеты потоков, порядок заг�
 маркированный сокет) и падает на несовпадении ALPN, так что реконнект
 никогда не даунгрейдит тихо `h2` до `http/1.1`.
 
-## Конфигурация (блок `http2`)
+## Пример Конфигурации (блок `http2`)
 
-```json
-"http2": {
-    "settings": {
-        "header_table_size": 65536,
-        "enable_push": false,
-        "max_concurrent_streams": null,
-        "initial_window_size": 6291456,
-        "max_frame_size": 16384,
-        "max_header_list_size": null
-    },
-    "settings_order": ["HEADER_TABLE_SIZE", "ENABLE_PUSH", "INITIAL_WINDOW_SIZE", "MAX_FRAME_SIZE"],
-    "connection_window_update": 15663105,
-    "initial_stream_id": null,
-    "priority_frames": null,
-    "headers_priority": { "exclusive": true, "depends_on": 0, "weight": 255 },
-    "end_stream_on_headers": true,
-    "pseudo_headers_order": [":method", ":authority", ":scheme", ":path"],
-    "headers_order": null,
-    "http_headers": {
-        "user-agent": "Mozilla/5.0 (...)",
-        "accept-language": "en-US,en;q=0.6"
-    }
-}
+```yaml
+http2:
+  settings:
+    header_table_size: 65536
+    enable_push: false
+    max_concurrent_streams: null
+    initial_window_size: 6291456
+    max_frame_size: 16384
+    max_header_list_size: null
+  settings_order:
+    - HEADER_TABLE_SIZE
+    - ENABLE_PUSH
+    - INITIAL_WINDOW_SIZE
+    - MAX_FRAME_SIZE
+  connection_window_update: 15663105
+  initial_stream_id: null
+  priority_frames: null
+  headers_priority:
+    exclusive: true
+    depends_on: 0
+    weight: 255
+  end_stream_on_headers: true
+  pseudo_headers_order:
+    - ":method"
+    - ":authority"
+    - ":scheme"
+    - ":path"
+  headers_order: 
+    - user-agent
+    - accept
+    - accept-language
+    - priority
+  http_headers:
+    user-agent: "Mozilla/5.0 (...)"
+    accept-language: "en-US,en;q=0.6"
 ```
 
 ### `settings` — значения SETTINGS-фрейма
@@ -115,11 +127,16 @@ ID за ними — коллизия ломает соединение.
 PRIORITY-фреймы, отправляемые до обычных стримов запросов (классический
 сигнал дерева приоритетов Firefox/Chrome):
 
-```json
-"priority_frames": [
-    { "stream_id": 1, "exclusive": false, "depends_on": 0, "weight": 41 },
-    { "stream_id": 3, "exclusive": false, "depends_on": 0, "weight": 42 }
-]
+```yaml
+priority_frames:
+  - stream_id: 1
+    exclusive: false
+    depends_on: 0
+    weight: 41
+  - stream_id: 3
+    exclusive: false
+    depends_on: 0
+    weight: 42
 ```
 
 | Поле | Смысл |
@@ -137,8 +154,11 @@ PRIORITY-фреймы, отправляемые до обычных стримо
 Приоритет, цепляемый к каждому HEADERS-стриму запроса
 (`headers_stream_dependency`):
 
-```json
-"headers_priority": { "exclusive": true, "depends_on": 0, "weight": 255 }
+```yaml
+headers_priority:
+  exclusive: true
+  depends_on: 0
+  weight: 255
 ```
 
 Те же поля, что у priority-фреймов, минус `stream_id`. `null` = без
@@ -162,8 +182,12 @@ end-of-stream, то есть перекраивает закрытие, а не 
 Браузеры тут характерно различаются — Firefox шлёт
 `:method, :authority, :scheme, :path`:
 
-```json
-"pseudo_headers_order": [":method", ":authority", ":scheme", ":path"]
+```yaml
+pseudo_headers_order:
+  - ":method"
+  - ":authority"
+  - ":scheme"
+  - ":path"
 ```
 
 ### `headers_order` + `http_headers` — заголовки
@@ -178,14 +202,17 @@ end-of-stream, то есть перекраивает закрытие, а не 
 3. В конец дописываются все остальные входящие заголовки, которых ещё
    не видели.
 
-```json
-"headers_order": ["user-agent", "accept", "accept-language", "priority"],
-"http_headers": {
-    "user-agent": "Mozilla/5.0",
-    "accept-language": "en-US,en;q=0.6",
-    "priority": "u=0, i",
-    "referer": null
-}
+```yaml
+headers_order:
+  - user-agent
+  - accept
+  - accept-language
+  - priority
+http_headers:
+  user-agent: "Mozilla/5.0"
+  accept-language: "en-US,en;q=0.6"
+  priority: "u=0, i"
+  referer: null
 ```
 
 Итог: `user-agent` заменён, `accept-language` заменён, `priority`
@@ -207,7 +234,7 @@ HEADERS → DATA → DATA → TRAILERS + END_STREAM (с трейлерами)
 
 ## Связка с ALPS
 
-При `tls.alps: true` те же `settings` + `settings_order` перекодируются
+При `alps: true` те же `settings` + `settings_order` перекодируются
 в TLS ALPS-пейлоад для `h2` (см. `TLS.ru.md`) — браузеры используют ровно
 ту же кодировку, так что один конфиг едет в оба места на проводе. Держи
 их в синхроне с целевым браузером: расхождение SETTINGS-фрейма и

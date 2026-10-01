@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::sync::Arc;
 
@@ -56,7 +57,7 @@ pub fn remove_auto_iptables(
                 let mark_s = mark.to_string();
                 let qnum_s = qnum.to_string();
                 loop {
-                    match Command::new(bin)
+                    match create_privileged_command(bin)
                         .args(build_args(
                             "-D",
                             None,
@@ -102,7 +103,7 @@ fn ensure_one(bin: &str, mark: u32, qnum: u16, syn: bool, strict: bool) -> Resul
     let qnum_s = qnum.to_string();
 
     loop {
-        match Command::new(bin)
+        match create_privileged_command(bin)
             .args(build_args(
                 "-D",
                 None,
@@ -133,7 +134,7 @@ fn ensure_one(bin: &str, mark: u32, qnum: u16, syn: bool, strict: bool) -> Resul
         qnum,
         syn
     );
-    match Command::new(bin)
+    match create_privileged_command(bin)
         .args(build_args(
             "-I",
             Some("1"),
@@ -190,4 +191,54 @@ fn build_args<'a>(
         "--queue-bypass",
     ]);
     args
+}
+
+fn create_privileged_command(bin: &str) -> Command {
+    let mut cmd = Command::new(bin);
+
+    unsafe {
+        cmd.pre_exec(|| {
+            const PR_CAP_AMBIENT: libc::c_int = 47;
+            const PR_CAP_AMBIENT_RAISE: libc::c_ulong = 2;
+            const CAP_NET_ADMIN: libc::c_ulong = 12;
+
+            #[repr(C)]
+            struct CapHeader {
+                version: u32,
+                pid: i32,
+            }
+            #[repr(C)]
+            #[derive(Copy, Clone)]
+            struct CapData {
+                effective: u32,
+                permitted: u32,
+                inheritable: u32,
+            }
+
+            let mut header = CapHeader {
+                version: 0x20080522,
+                pid: 0,
+            };
+            let mut data = [CapData {
+                effective: 0,
+                permitted: 0,
+                inheritable: 0,
+            }; 2];
+
+            if libc::syscall(libc::SYS_capget, &mut header as *mut _, data.as_mut_ptr()) == 0 {
+                data[0].inheritable |= 1 << CAP_NET_ADMIN;
+                libc::syscall(libc::SYS_capset, &mut header as *mut _, data.as_ptr());
+            }
+
+            let res = libc::prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_ADMIN, 0, 0);
+
+            if res != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            Ok(())
+        });
+    }
+
+    cmd
 }

@@ -64,22 +64,26 @@ base.mark.is_some() || !tcp_domains.is_empty()`, `src/main.rs`). Так что
   (напр. zapret/nfqws обычно сидит на `300`) — на один номер может
   забиндиться только один процесс, второй бинд упадёт.
 
-## Конфигурация (блок `tcp`)
+## Пример Конфигурации (блок `tcp`)
 
-```json
-"tcp": {
-    "mark": "0x10",
-    "qnum_syn": 301,
-    "qnum_tcp": 302,
-    "auto_iptables": true,
-    "ttl": 128,
-    "window_size": 64240,
-    "mss": 1460,
-    "window_scale": 7,
-    "dont_fragment": true,
-    "timestamp": true,
-    "tcp_options_order": ["mss", "sack_perm", "timestamp", "wscale", "nop"]
-}
+```yaml
+tcp:
+  mark: 0x10
+  qnum_syn: 301
+  qnum_tcp: 302
+  auto_iptables: true
+  ttl: 128
+  window_size: 64240
+  mss: 1460
+  window_scale: 7
+  dont_fragment: true
+  timestamp: true
+  tcp_options_order:
+    - mss
+    - sack_perm
+    - timestamp
+    - wscale
+    - nop
 ```
 
 | Поле | Тип | Смысл |
@@ -157,21 +161,21 @@ iptables-правил и свою ветку конфига в обработч�
 выбранные домены, а остальное не трогают, и каждый домен routят отдельно
 (`ip rule add fwmark <M> table <T>` / разные гейтвеи).
 
-```json
-{
-    "tls.peet.ws": {
-        "tcp": {
-            "mark": "0x11",
-            "ttl": 100,
-            "window_size": 64130,
-            "mss": 1400,
-            "window_scale": 7,
-            "dont_fragment": true,
-            "timestamp": false,
-            "tcp_options_order": ["mss", "sack_perm", "wscale", "nop"]
-        }
-    }
-}
+```yaml
+"tls.peet.ws":
+  tcp:
+    mark: 0x11
+    ttl: 100
+    window_size: 64130
+    mss: 1400
+    window_scale: 7
+    dont_fragment: true
+    timestamp: false
+    tcp_options_order:
+      - mss
+      - sack_perm
+      - wscale
+      - nop
 ```
 
 С таким оверлеем только апстрим к `tls.peet.ws` получит марку `SO_MARK 0x11` и
@@ -186,36 +190,37 @@ iptables-правил и свою ветку конфига в обработч�
 `{"mark": "0x11"}` встаёт в ту же ветку рерайта/роутинга, что и домен с
 полным профилем `0x11`, и TCP-настройки перетекают оттуда:
 
-```json
-{
-    "browserleaks.com": {
-        "config": { "upstream_proxy": null },
-        "tcp": {
-            "mark": "0x11",
-            "ttl": 100,
-            "window_size": 64130,
-            "mss": 1460,
-            "window_scale": 7,
-            "dont_fragment": true,
-            "timestamp": true,
-            "tcp_options_order": ["mss", "sack_perm", "wscale", "nop"]
-        }
-    },
-    "*.browserleaks.*": {
-        "config": { "upstream_proxy": null },
-        "tcp": { "mark": "0x11" },
-        "tls": {
-            "cipher_suites": [
-                "TLS_AES_128_GCM_SHA256",
-                "TLS_AES_256_GCM_SHA384",
-                "ECDHE-ECDSA-AES128-GCM-SHA256",
-                "ECDHE-RSA-AES128-GCM-SHA256",
-                "TLS_RSA_WITH_AES_256_CBC_SHA"
-            ],
-            "enable_ech": false
-        }
-    }
-}
+```yaml
+"browserleaks.com":
+  config:
+    upstream_proxy: null
+  tcp:
+    mark: 0x11
+    ttl: 100
+    window_size: 64130
+    mss: 1460
+    window_scale: 7
+    dont_fragment: true
+    timestamp: true
+    tcp_options_order:
+      - mss
+      - sack_perm
+      - wscale
+      - nop
+
+"*.browserleaks.*":
+  config:
+    upstream_proxy: null
+  tcp:
+    mark: 0x11
+  tls:
+    cipher_suites:
+      - TLS_AES_128_GCM_SHA256
+      - TLS_AES_256_GCM_SHA384
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      - ECDHE-RSA-AES128-GCM-SHA256
+      - TLS_RSA_WITH_AES_256_CBC_SHA
+    enable_ech: false
 ```
 
 Заметки про общую марку:
@@ -276,12 +281,15 @@ sudo tcpdump -i any 'tcp[tcpflags] & tcp-syn != 0' -v -c 5
 ## Диагностика
 
 - **`Permission denied (you must be root)` на `iptables -A`** —
-  `nf_tables`-бэкенд хочет настоящий рут, даже когда `SO_MARK`/NFQUEUE
-  работают с файловыми capabilities. Варианты: запуск под sudo / рутовым
-  systemd-юнитом, либо `auto_iptables: false` + правила один раз руками.
+  
+  ```bash
+  sudo setcap 'cap_net_admin,cap_net_raw=+eip' /path/to/mitm-proxy-ja3-ja4
+  ```
+  
+  либо `auto_iptables: false` + правила один раз руками.
 - **Капабилити слетают после пересборки** — `cargo build` создаёт новый
   бинарник, файловые капы его не переживают. Перенакатывай
-  `setcap 'cap_net_admin,cap_net_raw+ep'` после каждой сборки (проверка —
+  `sudo setcap 'cap_net_admin,cap_net_raw=+eip'` после каждой сборки (проверка —
   `getcap`). На NixOS `/nix/store` read-only — только через
   `security.wrappers`. В контейнерах нужен `--cap-add=NET_ADMIN,NET_RAW`.
 - **Наши правила видят 0 пакетов** — по порядку: (1) тестовый трафик
@@ -291,6 +299,4 @@ sudo tcpdump -i any 'tcp[tcpflags] & tcp-syn != 0' -v -c 5
   быть AAAA и трафик пойдёт по IPv6.
 - **`bind(queue) failed`** — номер очереди занят другим инструментом.
   Выбери свободные (см. `/proc/net/netfilter/nfnetlink_queue`).
-- **Хендшейки/`502` после включения марок** — для `SO_MARK` нужен
-  `CAP_NET_ADMIN`; ошибка видна в логах как `Failed to set SO_MARK` /
-  `Connection failure`.
+

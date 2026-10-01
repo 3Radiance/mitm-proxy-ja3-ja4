@@ -63,27 +63,31 @@ marked domains are still rewritten.
   (e.g. zapret/nfqws usually sits on `300`) — only one process can bind a
   queue number, the second bind fails.
 
-## Configuration (`tcp` block)
+## Example Configuration (`tcp` block)
 
-```json
-"tcp": {
-    "mark": "0x10",
-    "qnum_syn": 301,
-    "qnum_tcp": 302,
-    "auto_iptables": true,
-    "ttl": 128,
-    "window_size": 64240,
-    "mss": 1460,
-    "window_scale": 7,
-    "dont_fragment": true,
-    "timestamp": true,
-    "tcp_options_order": ["mss", "sack_perm", "timestamp", "wscale", "nop"]
-}
+```yaml
+tcp:
+  mark: 0x10
+  qnum_syn: 301
+  qnum_tcp: 302
+  auto_iptables: true
+  ttl: 128
+  window_size: 64240
+  mss: 1460
+  window_scale: 7
+  dont_fragment: true
+  timestamp: true
+  tcp_options_order:
+    - mss
+    - sack_perm
+    - timestamp
+    - wscale
+    - nop
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
-| `mark` | hex string or int, optional | `SO_MARK` for upstream sockets and the mark the iptables rules match. `"0x10"` and `16` are the same. If unset, the TCP layer is off entirely (no queues, direct connects). |
+| `mark` | hex string or int, optional | `SO_MARK` for upstream sockets and the mark the iptables rules match. `0x10` and `16` are the same. If unset, the TCP layer is off entirely (no queues, direct connects). |
 | `qnum_syn` | int, optional | NFQUEUE number for SYN packets. Must differ from `qnum_tcp`. |
 | `qnum_tcp` | int, optional | NFQUEUE number for established-flow packets. |
 | `auto_iptables` | bool (default `false`) | Manage the mangle rules automatically (insert on start, delete on Ctrl+C). |
@@ -106,7 +110,7 @@ marked domains are still rewritten.
 | `nop`, `noop` | Single NOP byte (padding/alignment) |
 
 Unknown names are ignored. The encoder pads the options to a 4-byte
-boundary automatically, so an explicit `"nop"` is how you reproduce
+boundary automatically, so an explicit `nop` is how you reproduce
 fingerprints like `mss,sack,timestamp,nop,wscale` — without it you'd get
 zero (EOL) padding instead and a different signature.
 
@@ -140,11 +144,11 @@ mangle rules:
 With `auto_iptables: false` nothing is touched: apply the two rules per
 mark once by hand under sudo; they persist until reboot/flush.
 
-## Per-domain TCP profiles (`-d domain.json`)
+## Per-domain TCP profiles (`-d domain.yaml`)
 
 A domain overlay may carry its own `tcp` section. Merge semantics: every
 field inherits the base value unless the overlay sets it — including
-`mark` (an explicit `"mark": null` unsets it and opts that domain out of
+`mark` (an explicit `mark: null` unsets it and opts that domain out of
 rewriting). `qnum_syn`/`qnum_tcp`/`auto_iptables` are always shared from
 the base profile. Every distinct mark gets its own iptables pair and its
 own config branch in the queue handlers (`mark → TcpConfig` map,
@@ -157,21 +161,21 @@ upstream sockets and its SYNs rewritten. This is how you rewrite only
 selected domains while leaving everything else untouched, and route each
 domain separately (`ip rule add fwmark <M> table <T>` / distinct gateways).
 
-```json
-{
-    "tls.peet.ws": {
-        "tcp": {
-            "mark": "0x11",
-            "ttl": 100,
-            "window_size": 64130,
-            "mss": 1400,
-            "window_scale": 7,
-            "dont_fragment": true,
-            "timestamp": false,
-            "tcp_options_order": ["mss", "sack_perm", "wscale", "nop"]
-        }
-    }
-}
+```yaml
+"tls.peet.ws":
+  tcp:
+    mark: 0x11
+    ttl: 100
+    window_size: 64130
+    mss: 1400
+    window_scale: 7
+    dont_fragment: true
+    timestamp: false
+    tcp_options_order:
+      - mss
+      - sack_perm
+      - wscale
+      - nop
 ```
 
 With this overlay only `tls.peet.ws` upstreams get `SO_MARK 0x11` and the
@@ -182,40 +186,41 @@ To reuse the same fingerprint on another pattern, just set the same
 `mark` — no need to copy the full `tcp` block. When the base `mark` is
 disabled, only the domain sockets are marked (each overlay's `mark` goes
 to `SO_MARK` on its own upstreams), and the queue handlers pick the
-rewrite by mark only. So a minimal `{"mark": "0x11"}` joins the same
+rewrite by mark only. So a minimal `mark: 0x11` joins the same
 rewrite/route branch as the domain that defines the full `0x11` profile,
 and its TCP settings spill over from there:
 
-```json
-{
-    "browserleaks.com": {
-        "config": { "upstream_proxy": null },
-        "tcp": {
-            "mark": "0x11",
-            "ttl": 100,
-            "window_size": 64130,
-            "mss": 1460,
-            "window_scale": 7,
-            "dont_fragment": true,
-            "timestamp": true,
-            "tcp_options_order": ["mss", "sack_perm", "wscale", "nop"]
-        }
-    },
-    "*.browserleaks.*": {
-        "config": { "upstream_proxy": null },
-        "tcp": { "mark": "0x11" },
-        "tls": {
-            "cipher_suites": [
-                "TLS_AES_128_GCM_SHA256",
-                "TLS_AES_256_GCM_SHA384",
-                "ECDHE-ECDSA-AES128-GCM-SHA256",
-                "ECDHE-RSA-AES128-GCM-SHA256",
-                "TLS_RSA_WITH_AES_256_CBC_SHA"
-            ],
-            "enable_ech": false
-        }
-    }
-}
+```yaml
+"browserleaks.com":
+  config:
+    upstream_proxy: null
+  tcp:
+    mark: 0x11
+    ttl: 100
+    window_size: 64130
+    mss: 1460
+    window_scale: 7
+    dont_fragment: true
+    timestamp: true
+    tcp_options_order:
+      - mss
+      - sack_perm
+      - wscale
+      - nop
+
+"*.browserleaks.*":
+  config:
+    upstream_proxy: null
+  tcp:
+    mark: 0x11
+  tls:
+    cipher_suites:
+      - TLS_AES_128_GCM_SHA256
+      - TLS_AES_256_GCM_SHA384
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      - ECDHE-RSA-AES128-GCM-SHA256
+      - TLS_RSA_WITH_AES_256_CBC_SHA
+    enable_ech: false
 ```
 
 Notes on sharing a mark:
@@ -223,7 +228,7 @@ Notes on sharing a mark:
 - One mark = one rewrite branch + one routing slot, by design. Queue
   handlers match **by mark only, not by SNI** (`tcp_domains.get(&mark)` in
   `src/tcp_fingerprint/syn.rs` / `tcp.rs`). That is what makes the
-  minimal `{"mark": "0x11"}` form work — and what makes per-domain
+  minimal `mark: 0x11` form work — and what makes per-domain
   routing easy: one domain (or group) → one mark → one `ip rule` / table.
   Just don't put *different* `ttl`/options under the same mark: they
   share one branch, so keep the full block on one pattern and join it
@@ -275,13 +280,16 @@ sudo tcpdump -i any 'tcp[tcpflags] & tcp-syn != 0' -v -c 5
 
 ## Troubleshooting
 
-- **`Permission denied (you must be root)` on `iptables -A`** — the
-  `nf_tables` backend wants real root even when `SO_MARK`/NFQUEUE work
-  with file capabilities. Options: run under sudo / as a root systemd
-  unit, or set `auto_iptables: false` and apply the rules once by hand.
+- **`Permission denied (you must be root)` on `iptables -A`** — 
+
+  ```bash
+  sudo setcap 'cap_net_admin,cap_net_raw=+eip' /path/to/mitm-proxy-ja3-ja4
+  ```
+
+  or set `auto_iptables: false` and apply the rules once by hand.
 - **Capabilities vanish after rebuild** — `cargo build` creates a new
   binary, file caps don't survive it. Re-apply
-  `setcap 'cap_net_admin,cap_net_raw+ep'` after every build (check with
+  `sudo setcap 'cap_net_admin,cap_net_raw=+eip'` after every build (check with
   `getcap`). On NixOS `/nix/store` is read-only — use
   `security.wrappers` instead. In containers you need
   `--cap-add=NET_ADMIN,NET_RAW`.
@@ -292,6 +300,3 @@ sudo tcpdump -i any 'tcp[tcpflags] & tcp-syn != 0' -v -c 5
   and the traffic IPv6.
 - **`bind(queue) failed`** — the queue number is taken by another tool.
   Pick free numbers (see `/proc/net/netfilter/nfnetlink_queue`).
-- **Handshake/`502` after enabling marks** — `SO_MARK` needs
-  `CAP_NET_ADMIN`; the error surfaces as `Failed to set SO_MARK` /
-  `Connection failure` in the logs.

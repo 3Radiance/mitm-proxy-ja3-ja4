@@ -8,6 +8,9 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_btls::SslStream;
 
+use std::pin::Pin;
+use tokio::time::Duration;
+
 pub async fn build_upstream_h2_builder(config: Arc<Http2Config>) -> Result<http2::client::Builder> {
     let mut builder = http2::client::Builder::new();
 
@@ -112,17 +115,33 @@ pub async fn upstream_reconnect(proxydata: ConnectionData) -> Result<SslStream<T
 
     remote.set_nodelay(true)?;
 
-    let (remote, alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
-        remote,
-        &proxydata.sni,
-        proxydata.tls,
-        proxydata.tcp,
-        proxydata.http2,
-        true,
-        proxydata.upstream,
-        proxydata.cache,
+    let remote_ssl =
+        tls_fingerprint::tls::create_ssl_acceptor_upstream(proxydata.tls.clone()).await?;
+
+    let mut ssl = remote_ssl.configure()?.into_ssl(&proxydata.sni)?;
+
+    tls_fingerprint::helpers::set_alps(&mut ssl, proxydata.http2.clone(), proxydata.tls.clone());
+    tls_fingerprint::ech::set_ech(
+        &mut ssl,
+        proxydata.tls.clone(),
+        proxydata.tcp.clone(),
+        proxydata.http2.clone(),
+        &*proxydata.sni,
+        proxydata.upstream.clone(),
+        proxydata.cache.clone(),
     )
     .await?;
+
+    let mut remote = SslStream::new(ssl, remote)?;
+
+    tokio::time::timeout(Duration::from_secs(5), Pin::new(&mut remote).connect()).await??;
+
+    let alpn = remote.ssl().selected_alpn_protocol().map(|p| {
+        let mut wire = Vec::with_capacity(1 + p.len());
+        wire.push(p.len() as u8);
+        wire.extend_from_slice(p);
+        wire
+    });
 
     if let Some(selected_alpn) = &*proxydata.selected_alpn {
         if let Some(alpn) = alpn {

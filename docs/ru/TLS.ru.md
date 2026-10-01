@@ -34,28 +34,40 @@ Upstream-first важен: ALPN, выбранный настоящим серв�
 ticket → delegated credentials → порядок расширений → ALPS → ECH.
 Проверка серта — по Chromium root store. Таймаут хендшейка — 5 секунд.
 
-## Конфигурация (блок `tls`)
+## Пример Конфигурации (блок `tls`)
 
-```json
-"tls": {
-    "cipher_suites": ["TLS_AES_128_GCM_SHA256", "ECDHE-RSA-AES128-GCM-SHA256", "..."],
-    "alpn": ["h2", "http/1.1"],
-    "curves": ["X25519", "P-256", "P-384"],
-    "signature_algorithms": ["ecdsa_secp256r1_sha256", "rsa_pss_rsae_sha256", "..."],
-    "extensions_order": null,
-    "cert_compression": ["brotli"],
-    "permute_extensions": false,
-    "status_request": false,
-    "signed_certificate_timestamp": false,
-    "alps": false,
-    "session_ticket": false,
-    "grease_enabled": false,
-    "enable_ech": true,
-    "enable_ech_grease": false,
-    "delegated_credentials": null,
-    "record_size_limit": null,
-    "doh": ["dns.google"]
-}
+```yaml
+tls:
+  cipher_suites:
+    - TLS_AES_128_GCM_SHA256
+    - ECDHE-RSA-AES128-GCM-SHA256
+    - "..."
+  alpn:
+    - h2
+    - http/1.1
+  curves:
+    - X25519
+    - P-256
+    - P-384
+  signature_algorithms:
+    - ecdsa_secp256r1_sha256
+    - rsa_pss_rsae_sha256
+    - "..."
+  extensions_order: null
+  cert_compression:
+    - brotli
+  permute_extensions: false
+  status_request: false
+  signed_certificate_timestamp: false
+  alps: false
+  session_ticket: false
+  grease_enabled: false
+  enable_ech: true
+  enable_ech_grease: false
+  delegated_credentials: null
+  record_size_limit: null
+  doh:
+    - dns.google
 ```
 
 ### `cipher_suites` — строгий порядок, два блока
@@ -312,22 +324,19 @@ ecdsa_sha1
 Удобно для чекеров отпечатков (урезанный набор шифров, без ECH) или
 хостов, ломающихся от конкретного расширения:
 
-```json
-{
-    "browserleaks.com": {
-        "config": { "upstream_proxy": null },
-        "tls": {
-            "cipher_suites": [
-                "TLS_AES_128_GCM_SHA256",
-                "TLS_AES_256_GCM_SHA384",
-                "ECDHE-ECDSA-AES128-GCM-SHA256",
-                "ECDHE-RSA-AES128-GCM-SHA256",
-                "TLS_RSA_WITH_AES_256_CBC_SHA"
-            ],
-            "enable_ech": false
-        }
-    }
-}
+
+```yaml
+"browserleaks.com":
+  config:
+    upstream_proxy: null
+  tls:
+    cipher_suites:
+      - TLS_AES_128_GCM_SHA256
+      - TLS_AES_256_GCM_SHA384
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      - ECDHE-RSA-AES128-GCM-SHA256
+      - TLS_RSA_WITH_AES_256_CBC_SHA
+    enable_ech: false
 ```
 
 ## Грабли

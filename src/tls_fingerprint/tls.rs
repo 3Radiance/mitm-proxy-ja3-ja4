@@ -1,6 +1,5 @@
 use crate::config::*;
 use crate::tls_fingerprint::cert::MitmCa;
-use crate::tls_fingerprint::ech::{set_ech, EchCache};
 use crate::tls_fingerprint::helpers::*;
 use anyhow::Result;
 
@@ -23,16 +22,7 @@ pub fn create_ssl_acceptor(ca: Arc<MitmCa>, alpn: &Option<Vec<u8>>) -> Result<Ss
     Ok(builder.build())
 }
 
-pub async fn create_ssl_acceptor_upstream(
-    client: TcpStream,
-    target_host: &str,
-    tls: Arc<TlsConfig>,
-    tcp: Arc<TcpConfig>,
-    http2: Arc<Http2Config>,
-    need_ech: bool,
-    upstream: Arc<Option<String>>,
-    cache: Arc<EchCache>,
-) -> Result<(SslStream<TcpStream>, Option<Vec<u8>>)> {
+pub async fn create_ssl_acceptor_upstream(tls: Arc<TlsConfig>) -> Result<SslConnector> {
     let mut builder = SslConnector::builder(SslMethod::tls())?;
     let mut store_builder = btls::x509::store::X509StoreBuilder::new()?;
 
@@ -61,47 +51,7 @@ pub async fn create_ssl_acceptor_upstream(
 
     let connector = builder.build();
 
-    let mut ssl = connector.configure()?.into_ssl(target_host)?;
-
-    set_alps(&mut ssl, http2.clone(), tls.clone());
-    if need_ech {
-        set_ech(
-            &mut ssl,
-            tls.clone(),
-            tcp,
-            http2,
-            target_host,
-            upstream,
-            cache,
-        )
-        .await?;
-    }
-
-    let mut s = SslStream::new(ssl, client)?;
-
-    tokio::time::timeout(Duration::from_secs(5), Pin::new(&mut s).connect()).await??;
-
-    let alpn = s.ssl().selected_alpn_protocol().map(|p| {
-        let mut wire = Vec::with_capacity(1 + p.len());
-        wire.push(p.len() as u8);
-        wire.extend_from_slice(p);
-        wire
-    });
-
-    let alpn_debug = alpn
-        .as_deref()
-        .map(|v| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_else(|| "<none>".to_string());
-
-    crate::log_tag!(
-        info,
-        "TLS",
-        "Upstream TLS handshake completed for {} with ALPN: {}",
-        target_host,
-        alpn_debug
-    );
-
-    Ok((s, alpn))
+    Ok(connector)
 }
 
 pub async fn handle_tls(client: TcpStream, acceptor: SslAcceptor) -> Result<SslStream<TcpStream>> {

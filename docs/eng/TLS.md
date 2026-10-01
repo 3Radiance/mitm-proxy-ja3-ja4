@@ -2,7 +2,7 @@
 
 [English](TLS.md) | [Русский](../ru/TLS.ru.md)
 
-The upstream TLS connection is built entirely from the JSON profile:
+The upstream TLS connection is built entirely from the YAML profile:
 every byte of the ClientHello that fingerprinting sees — cipher order,
 extensions and their order, curves, signature algorithms, ALPN, GREASE,
 compression, ECH — is caller-controlled. The stack is BoringSSL via
@@ -35,28 +35,40 @@ permutation/order → OCSP → SCT → session ticket → delegated credentials
 → extension order → ALPS → ECH. Verification uses the Chromium root
 store. Handshake timeout is 5 seconds.
 
-## Configuration (`tls` block)
+## Example Configuration (`tls` block)
 
-```json
-"tls": {
-    "cipher_suites": ["TLS_AES_128_GCM_SHA256", "ECDHE-RSA-AES128-GCM-SHA256", "..."],
-    "alpn": ["h2", "http/1.1"],
-    "curves": ["X25519", "P-256", "P-384"],
-    "signature_algorithms": ["ecdsa_secp256r1_sha256", "rsa_pss_rsae_sha256", "..."],
-    "extensions_order": null,
-    "cert_compression": ["brotli"],
-    "permute_extensions": false,
-    "status_request": false,
-    "signed_certificate_timestamp": false,
-    "alps": false,
-    "session_ticket": false,
-    "grease_enabled": false,
-    "enable_ech": true,
-    "enable_ech_grease": false,
-    "delegated_credentials": null,
-    "record_size_limit": null,
-    "doh": ["dns.google"]
-}
+```yaml
+tls:
+  cipher_suites:
+    - TLS_AES_128_GCM_SHA256
+    - ECDHE-RSA-AES128-GCM-SHA256
+    - "..."
+  alpn:
+    - h2
+    - http/1.1
+  curves:
+    - X25519
+    - P-256
+    - P-384
+  signature_algorithms:
+    - ecdsa_secp256r1_sha256
+    - rsa_pss_rsae_sha256
+    - "..."
+  extensions_order: null
+  cert_compression:
+    - brotli
+  permute_extensions: false
+  status_request: false
+  signed_certificate_timestamp: false
+  alps: false
+  session_ticket: false
+  grease_enabled: false
+  enable_ech: true
+  enable_ech_grease: false
+  delegated_credentials: null
+  record_size_limit: null
+  doh:
+    - dns.google
 ```
 
 ### `cipher_suites` — strict order, two blocks
@@ -231,16 +243,13 @@ Unknown names are a hard error, not a silent skip.
   that exact encoding, so no separate config exists. Empty `settings`
   means an empty ALPS payload.
 
-**### `delegated_credentials` — opt-in extension**
+### `delegated_credentials` — opt-in extension
 
 Enables the TLS `delegated_credentials` extension.
 
 Delegated Credentials allow a TLS endpoint to use a short-lived delegated
-
 key for TLS handshakes instead of the private key associated with the
-
 certificate. The value is a list of signature-scheme names specifying
-
 which algorithms may be used by the delegated credential.
 
 `null` = extension absent.
@@ -255,8 +264,6 @@ ed25519
 ecdsa_sha1
 ```
 
-
-
 ### `record_size_limit` — int or `null`
 
 Advertises the maximum TLS record size the client accepts
@@ -264,7 +271,7 @@ Advertises the maximum TLS record size the client accepts
 
 ### `doh` — resolvers for ECH lookup
 
-Hostnames of DoH resolvers (e.g. `["dns.google"]`), picked at random per
+Hostnames of DoH resolvers (e.g. `dns.google`), picked at random per
 lookup. Used only when `enable_ech` is `true`. See below.
 
 ## Encrypted Client Hello (ECH)
@@ -312,29 +319,25 @@ How the real config is resolved (only when `enable_ech` is `true`):
   `grease_enabled` / `enable_ech_grease` affect middlebox behavior, not
   the hash.
 
-## Per-domain TLS (`-d domain.json`)
+## Per-domain TLS (`-d domain.yaml`)
 
 Any `tls` field can be overridden per domain pattern; unspecified fields
-inherit the base profile, `"field": null` resets a list to absent. Useful
+inherit the base profile, `field: null` resets a list to absent. Useful
 for fingerprint-sensitive checkers (weaker cipher subset, no ECH) or for
 hosts that break under a particular extension:
 
-```json
-{
-    "browserleaks.com": {
-        "config": { "upstream_proxy": null },
-        "tls": {
-            "cipher_suites": [
-                "TLS_AES_128_GCM_SHA256",
-                "TLS_AES_256_GCM_SHA384",
-                "ECDHE-ECDSA-AES128-GCM-SHA256",
-                "ECDHE-RSA-AES128-GCM-SHA256",
-                "TLS_RSA_WITH_AES_256_CBC_SHA"
-            ],
-            "enable_ech": false
-        }
-    }
-}
+```yaml
+"browserleaks.com":
+  config:
+    upstream_proxy: null
+  tls:
+    cipher_suites:
+      - TLS_AES_128_GCM_SHA256
+      - TLS_AES_256_GCM_SHA384
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      - ECDHE-RSA-AES128-GCM-SHA256
+      - TLS_RSA_WITH_AES_256_CBC_SHA
+    enable_ech: false
 ```
 
 ## Gotchas

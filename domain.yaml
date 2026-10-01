@@ -1,0 +1,61 @@
+"tls.peet.ws":  
+  tls: 
+    cipher_suites:
+      - TLS_AES_128_GCM_SHA256
+      - TLS_AES_256_GCM_SHA384
+      - TLS_CHACHA20_POLY1305_SHA256
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      - ECDHE-RSA-AES128-GCM-SHA256
+      - ECDHE-ECDSA-AES256-GCM-SHA384
+      - ECDHE-RSA-AES256-GCM-SHA384
+    extensions_order:
+      - supported_groups
+      - ec_point_formats
+      - signature_algorithms
+      - server_name
+      - alpn
+      - signed_certificate_timestamp
+      - supported_versions
+      - extended_master_secret
+      - session_ticket
+      - psk_key_exchange_modes
+      - signature_algorithms_cert
+      - key_share
+      - renegotiation_info
+    enable_ech_grease: false
+  
+  http2:
+    settings_order:
+      - MAX_FRAME_SIZE
+      - HEADER_TABLE_SIZE
+      - ENABLE_PUSH
+      - INITIAL_WINDOW_SIZE
+    pseudo_headers_order:
+      - ":path"
+      - ":method"
+      - ":authority"
+      - ":scheme"
+    headers_order:
+      - accept-language
+      - user-agent
+    http_headers:
+      user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+      accept-language: "fi-FI,fi;q=0.9,en;q=0.8"
+
+"browserleaks.*":
+  config:
+    upstream_proxy: "127.0.0.1:10808"
+
+"tls.browserleaks.*":
+  config:
+    upstream_proxy: "127.0.0.1:10808"
+
+"*.browserleaks.*":
+  config:
+    upstream_proxy: "127.0.0.1:10808"
+
+
+
+    
+  
+      

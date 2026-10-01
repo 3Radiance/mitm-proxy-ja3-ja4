@@ -2,6 +2,8 @@ use super::http::*;
 use crate::config::TcpConfig;
 use crate::h2_fingerprint::h2::ConnectionData;
 use crate::{h1_fingerprint, h2_fingerprint};
+use std::pin::Pin;
+use tokio_btls::SslStream;
 
 use crate::tls_fingerprint;
 use crate::{Data, ProxyConfig};
@@ -53,17 +55,15 @@ impl Router {
     fn lookup(&self, sni: &str) -> Option<&Data> {
         let key = sni.trim_end_matches('.').to_ascii_lowercase();
 
-        // 1. exact: "mail.google.com"
         if let Some(d) = self.domains.get(&key) {
             return Some(d);
         }
 
         let domain = addr::parse_domain_name(&key).ok()?;
-        let root = domain.root()?; // "google.com" for "mail.google.com"
-        let suffix = domain.suffix(); // "com"
-        let prefix = domain.prefix()?; // "mail" for "mail.google.com"
+        let root = domain.root()?;
+        let suffix = domain.suffix();
+        let prefix = domain.prefix();
 
-        // 2. "*.google.com"
         if key != root {
             let candidate = format!("*.{root}");
             if let Some(d) = self.domains.get(&candidate) {
@@ -71,19 +71,22 @@ impl Router {
             }
         }
 
-        // 3. "*.google.*" / 4. "google.*" / 5. "mail.google.*"
         if let Some(label) = root.strip_suffix(&format!(".{suffix}")) {
-            let candidate = format!("*.{label}.*");
-            if let Some(d) = self.domains.get(&candidate) {
-                return Some(d);
-            }
             let candidate = format!("{label}.*");
             if let Some(d) = self.domains.get(&candidate) {
                 return Some(d);
             }
-            let candidate = format!("{prefix}.{label}.*");
+
+            let candidate = format!("*.{label}.*");
             if let Some(d) = self.domains.get(&candidate) {
                 return Some(d);
+            }
+
+            if let Some(p) = prefix {
+                let candidate = format!("{p}.{label}.*");
+                if let Some(d) = self.domains.get(&candidate) {
+                    return Some(d);
+                }
             }
         }
 
@@ -169,42 +172,39 @@ async fn handle(client: TcpStream, router: Arc<Router>) -> Result<()> {
     client.set_nodelay(true)?;
     remote.set_nodelay(true)?;
 
-    crate::log_tag!(
-        info,
-        "TLS",
-        "Starting upstream TLS handshake for SNI: {}",
-        sni
-    );
+    let remote_ssl = tls_fingerprint::tls::create_ssl_acceptor_upstream(handle.tls.clone()).await?;
 
-    let (remote, selected_alpn) = tls_fingerprint::tls::create_ssl_acceptor_upstream(
-        remote,
-        &sni,
+    let mut ssl = remote_ssl.configure()?.into_ssl(&sni)?;
+
+    tls_fingerprint::helpers::set_alps(&mut ssl, handle.http2.clone(), handle.tls.clone());
+    tls_fingerprint::ech::set_ech(
+        &mut ssl,
         handle.tls.clone(),
         handle.tcp.clone(),
         handle.http2.clone(),
-        true,
+        &sni,
         handle.upstream.clone(),
         handle.cache.clone(),
     )
     .await?;
 
+    let mut remote = SslStream::new(ssl, remote)?;
+
+    tokio::time::timeout(Duration::from_secs(5), Pin::new(&mut remote).connect()).await??;
+
+    let alpn = remote.ssl().selected_alpn_protocol().map(|p| {
+        let mut wire = Vec::with_capacity(1 + p.len());
+        wire.push(p.len() as u8);
+        wire.extend_from_slice(p);
+        wire
+    });
+
     client.write_all(HTTP_200_OK).await?;
 
-    let alpn_debug = selected_alpn
-        .as_deref()
-        .map(|v| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_else(|| "<none>".to_string());
-    crate::log_tag!(
-        info,
-        "TLS",
-        "Upstream TLS negotiated for {} with ALPN: {}",
-        sni,
-        alpn_debug
-    );
-
-    let acceptor = tls_fingerprint::tls::create_ssl_acceptor(handle.ca, &selected_alpn)?;
+    let acceptor = tls_fingerprint::tls::create_ssl_acceptor(handle.ca, &alpn)?;
 
     let client = tls_fingerprint::tls::handle_tls(client, acceptor).await?;
+
     crate::log_tag!(
         info,
         "TLS",
@@ -219,7 +219,7 @@ async fn handle(client: TcpStream, router: Arc<Router>) -> Result<()> {
         http1: handle.http1,
         upstream: handle.upstream,
         sni: Arc::new(sni.clone()),
-        selected_alpn: Arc::new(selected_alpn),
+        selected_alpn: Arc::new(alpn),
         packet,
         cache: handle.cache,
     };
@@ -247,7 +247,6 @@ pub async fn upstream_connect(
         Some(proxy_addr) => upstream_connect_helper(host, proxy_addr).await,
         None => {
             if let Some(mark) = tcp.mark {
-                crate::log_tag!(info, "TCP", "Set mark for {}: {}", host, mark);
                 match tokio::time::timeout(Duration::from_secs(5), set_mark(mark, host)).await? {
                     Ok(stream) => Ok(ConnectionStatus::Success(stream)),
                     Err(e) => Ok(ConnectionStatus::Failure(e.to_string())),

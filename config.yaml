@@ -1,0 +1,132 @@
+example:
+  config:
+    port: 9090
+    upstream_proxy: null
+    cert: /home/radiance-root/mitm-proxy-ja3-ja4/ca.crt
+    key: /home/radiance-root/mitm-proxy-ja3-ja4/ca.key
+
+  tcp:
+    mark: null
+    qnum_syn: 301
+    qnum_tcp: 302
+    auto_iptables: true
+    ttl: 64
+    window_size: 64240
+    mss: 1460
+    window_scale: 7
+    dont_fragment: true
+    timestamp: true
+    tcp_options_order:
+      - mss
+      - sack_perm
+      - timestamp
+      - wscale
+      - nop
+
+  tls:
+    cipher_suites:
+      - TLS_AES_128_GCM_SHA256
+      - TLS_AES_256_GCM_SHA384
+      - TLS_CHACHA20_POLY1305_SHA256
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      - ECDHE-RSA-AES128-GCM-SHA256
+      - ECDHE-ECDSA-AES256-GCM-SHA384
+      - ECDHE-RSA-AES256-GCM-SHA384
+      - ECDHE-ECDSA-CHACHA20-POLY1305
+      - ECDHE-RSA-CHACHA20-POLY1305
+      - ECDHE-RSA-AES128-SHA
+      - ECDHE-RSA-AES256-SHA
+      - TLS_RSA_WITH_AES_128_GCM_SHA256
+      - TLS_RSA_WITH_AES_256_GCM_SHA384
+      - TLS_RSA_WITH_AES_128_CBC_SHA
+      - TLS_RSA_WITH_AES_256_CBC_SHA
+    alpn:
+      - h2
+      - http/1.1
+    curves:
+      - X25519
+      - P-256
+      - P-384
+    signature_algorithms:
+      - ecdsa_secp256r1_sha256
+      - rsa_pss_rsae_sha256
+      - rsa_pkcs1_sha256
+      - ecdsa_secp384r1_sha384
+      - rsa_pss_rsae_sha384
+      - rsa_pkcs1_sha384
+      - rsa_pss_rsae_sha512
+      - rsa_pkcs1_sha512
+    extensions_order:
+      - server_name
+      - supported_groups
+      - ec_point_formats
+      - signature_algorithms
+      - alpn
+      - signed_certificate_timestamp
+      - extended_master_secret
+      - session_ticket
+      - supported_versions
+      - psk_key_exchange_modes
+      - signature_algorithms_cert
+      - key_share
+      - renegotiation_info
+    cert_compression:
+      - brotli
+    permute_extensions: false
+    status_request: true
+    signed_certificate_timestamp: true
+    alps: true
+    session_ticket: true
+    grease_enabled: true
+    enable_ech: true
+    enable_ech_grease: true
+    delegated_credentials:
+      - ecdsa_secp256r1_sha256
+      - ecdsa_secp384r1_sha384
+      - ecdsa_secp521r1_sha512
+      - ed25519
+      - ecdsa_sha1
+    record_size_limit: null
+    doh:
+      - dns.google
+
+  http2:
+    settings:
+      header_table_size: 65536
+      enable_push: false
+      max_concurrent_streams: null
+      initial_window_size: 6291456
+      max_frame_size: 16384
+      max_header_list_size: null
+    settings_order:
+      - HEADER_TABLE_SIZE
+      - ENABLE_PUSH
+      - INITIAL_WINDOW_SIZE
+      - MAX_FRAME_SIZE
+    connection_window_update: 15663105
+    initial_stream_id: null
+    priority_frames: null
+    headers_priority:
+      exclusive: true
+      depends_on: 0
+      weight: 255
+    end_stream_on_headers: true
+    pseudo_headers_order:
+      - ":method"
+      - ":authority"
+      - ":scheme"
+      - ":path"
+    headers_order: 
+      - user-agent
+      - accept-language
+    http_headers:
+      user-agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+      accept-language: "en-US,en;q=0.6"
+
+  http1:
+    headers_order: 
+      - user-agent
+      - accept-language
+    http_headers: 
+      user-agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+      accept-language: "en-US,en;q=0.6"

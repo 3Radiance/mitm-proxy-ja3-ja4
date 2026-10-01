@@ -137,7 +137,7 @@ pub struct Settings {
 impl AppConfig {
     pub fn load_from_file(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
-        let config: Self = serde_json::from_str(&content)?;
+        let config: Self = serde_yml::from_str(&content)?;
         Ok(config)
     }
 }

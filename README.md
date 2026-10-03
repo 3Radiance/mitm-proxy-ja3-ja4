@@ -4,7 +4,7 @@
 
 An HTTP MITM proxy built with Rust, `tokio`, and `btls`.
 
-This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, extension permutation/ordering, OCSP stapling, Certificate Transparency (SCT), session tickets, ALPS, and Encrypted Client Hello (ECH, resolved live via DoH, with GREASE fallback) are all driven by a JSON profile. HTTP/2 fingerprinting (Akamai) and HTTP/1.1 header ordering/rewriting are also fully configurable. TCP (L4) fingerprinting is live too: SYN packets of upstream connections are rewritten in NFQUEUE (TTL, window size, MSS, window scale, DF flag, timestamps, exact TCP option order, per-domain marks) with automatic iptables management.
+This project has been completely rewritten to leverage `btls` (BoringSSL) for advanced TLS fingerprinting capabilities. The TLS fingerprinting layer (JA3/JA4) is now fully spoofable — cipher suites, curves, signature algorithms, ALPN, record size limit, certificate compression, GREASE, extension permutation/ordering, OCSP stapling, Certificate Transparency (SCT), session tickets, ALPS, and Encrypted Client Hello (ECH, resolved live via DoH, with GREASE fallback) are all driven by a YAML profile. HTTP/2 fingerprinting (Akamai) and HTTP/1.1 header ordering/rewriting are also fully configurable. TCP (L4) fingerprinting is live too: SYN packets of upstream connections are rewritten in NFQUEUE (TTL, window size, MSS, window scale, DF flag, timestamps, exact TCP option order, per-domain marks) with automatic iptables management.
 
 ### TLS Fingerprint Spoofing Configuration
 
@@ -24,7 +24,7 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 * **BoringSSL Integration** — Uses `btls` and `tokio-btls` for TLS handshake handling and MITM interception.
 
-* **TLS Fingerprint Spoofing (JA3/JA4) — complete.** The upstream TLS connection is built entirely from a JSON profile passed via `-c` / `--config <path>` (see `example.json` for the format):
+* **TLS Fingerprint Spoofing (JA3/JA4) — complete.** The upstream TLS connection is built entirely from a YAML profile passed via `-c` / `--config <path>` (see `config.yaml` for the format):
 
   * Cipher suites, in strict caller-defined order.
   * Elliptic curves.
@@ -39,7 +39,7 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 * **Upstream-First ALPN Negotiation** — The proxy establishes and negotiates TLS with the upstream server before completing the browser-side TLS handshake. The ALPN selected by the upstream server is then used to configure the client-side TLS acceptor, preventing the browser from selecting a protocol that the upstream connection does not support.
 
-* **HTTP/2 Fingerprint Spoofing (Akamai)** — Fully configurable HTTP/2 fingerprinting through the JSON profile:
+* **HTTP/2 Fingerprint Spoofing (Akamai)** — Fully configurable HTTP/2 fingerprinting through the YAML profile:
 
   * HTTP/2 SETTINGS values and exact SETTINGS ordering.
   * Connection-level flow-control window updates.
@@ -59,11 +59,11 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
   * SYN rewriting: TTL, window size, DF flag, MSS / window-scale values, timestamp toggle, exact TCP option order (or in-place value patching when no order is set), with checksum recalculation.
   * Established-flow queue patching TTL/DF only (IPv6 hop limit supported); every packet gets an `Accept` verdict by default so queues never stall.
   * `SO_MARK`-based routing to per-domain TCP profiles, automatic iptables management (top-inserted above tools like zapret/nfqws, deduplicated, removed on Ctrl+C shutdown) with `--queue-bypass` safety.
-  * See `TCP.md` and the `tcp` block in `example.json`.
+  * See `TCP.md` and the `tcp` block in `config.yaml`.
 
 * **Upstream HTTP Proxy Support** — Can proxy connections through an upstream HTTP proxy via the `CONNECT` method.
 
-* **Per-Domain Profile Routing** — Pass `-d` / `--domain <path>` with a map of domain patterns to partial profile overlays (see `domain.json`). Each connection is matched by SNI (exact → `*.root` → `*.label.*` → `label.*` → base profile) and served with its own TCP/TLS/HTTP2/HTTP1/upstream settings, prebuilt once at startup. Only the fields that differ from the base profile need to be specified; everything else is inherited.
+* **Per-Domain Profile Routing** — Pass `-d` / `--domain <path>` with a map of domain patterns to partial profile overlays (see `domain.yaml`). Each connection is matched by SNI (exact → `*.root` → `*.label.*` → `label.*` → base profile) and served with its own TCP/TLS/HTTP2/HTTP1/upstream settings, prebuilt once at startup. Only the fields that differ from the base profile need to be specified; everything else is inherited.
 
 * **Asynchronous** — Built on `tokio` for high-performance, non-blocking asynchronous I/O.
 
@@ -159,7 +159,9 @@ cargo run --release -- -c profile.yaml -d domain.yaml
 
 "mail.google.*":
   tls:
-    curves: [X25519, P-256]
+    curves: 
+    - X25519
+    - P-256
 
 ```
 
@@ -167,11 +169,11 @@ Match order per connection (by SNI, case-insensitive): exact → `*.root` → `*
 
 ## Architecture Highlights
 
-* `src/main.rs`: CLI entrypoint using `clap` for parsing `-c` / `--config <path>`. The JSON configuration contains the proxy port, upstream proxy, CA paths, TLS fingerprint profiles, and HTTP/2 fingerprint profiles.
+* `src/main.rs`: CLI entrypoint using `clap` for parsing `-c` / `--config <path>`. The YAML configuration contains the proxy port, upstream proxy, CA paths, TLS fingerprint profiles, and HTTP/2 fingerprint profiles.
 
 ### Configuration
 
-* `src/config.rs`: JSON configuration model and parsers for all fingerprinting layers. Handles TLS settings, ECH/DoH options, HTTP/2 SETTINGS, stream priorities, header ordering, HTTP header overrides, pseudo-header ordering, and other profile-specific options.
+* `src/config.rs`: YAML configuration model and parsers for all fingerprinting layers. Handles TLS settings, ECH/DoH options, HTTP/2 SETTINGS, stream priorities, header ordering, HTTP header overrides, pseudo-header ordering, and other profile-specific options.
 
 * `src/domain.rs`: Per-domain profile overlays (`-d` / `--domain`). Partial overrides are deep-merged over the base profile once at startup; per-connection lookup is a cheap `Arc` clone with no re-allocation.
 

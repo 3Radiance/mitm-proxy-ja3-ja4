@@ -71,7 +71,7 @@ This project has been completely rewritten to leverage `btls` (BoringSSL) for ad
 
 - Rust (edition 2021)
 - Linux (required for the NFQUEUE L4 features)
-- Root or `CAP_NET_ADMIN` (for `SO_MARK`, NFQUEUE bind, and automatic iptables; without it set `"auto_iptables": false` in the `tcp` block and apply the mangle rules by hand — see `TCP.md`)
+- Root or `cap_net_admin,cap_net_raw=+eip` (for `SO_MARK`, NFQUEUE bind, and automatic iptables; without it set `"auto_iptables": false` in the `tcp` block and apply the mangle rules by hand — see `TCP.md`)
 - Firefox with [Multi-Account Containers](https://addons.mozilla.org/firefox/addon/multi-account-containers/) (highly recommended for leveraging multiple fingerprints simultaneously)
 
 ## Logging

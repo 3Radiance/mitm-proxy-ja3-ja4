@@ -71,7 +71,7 @@ HTTP MITM-прокси на Rust, `tokio` и `btls`.
 
 - Rust (edition 2021)
 - Linux (обязателен для L4-функций на NFQUEUE)
-- Root или `CAP_NET_ADMIN` (для `SO_MARK`, бинда NFQUEUE и автоматических iptables; без этого ставь `"auto_iptables": false` в блоке `tcp` и применяй mangle-правила руками — см. `TCP.ru.md`)
+- Root или `cap_net_admin,cap_net_raw=+eip` (для `SO_MARK`, бинда NFQUEUE и автоматических iptables; без этого ставь `"auto_iptables": false` в блоке `tcp` и применяй mangle-правила руками — см. `TCP.ru.md`)
 - Firefox с расширением [Multi-Account Containers](https://addons.mozilla.org/firefox/addon/multi-account-containers/) (настоятельно рекомендуется для одновременного использования нескольких отпечатков)
 
 ## Логирование
